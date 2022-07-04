@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -205,7 +205,7 @@ func TestDeleteSilenceHandler(t *testing.T) {
 			HTTPRequest: r,
 		})
 		responder.WriteResponse(w, p)
-		body, _ := ioutil.ReadAll(w.Result().Body)
+		body, _ := io.ReadAll(w.Result().Body)
 
 		require.Equal(t, tc.expectedCode, w.Code, fmt.Sprintf("test case: %d, response: %s", i, string(body)))
 	}
@@ -305,7 +305,7 @@ func TestPostSilencesHandler(t *testing.T) {
 			Silence:     &sil,
 		})
 		responder.WriteResponse(w, p)
-		body, _ := ioutil.ReadAll(w.Result().Body)
+		body, _ := io.ReadAll(w.Result().Body)
 
 		require.Equal(t, tc.expectedCode, w.Code, fmt.Sprintf("test case: %d, response: %s", i, string(body)))
 	}
