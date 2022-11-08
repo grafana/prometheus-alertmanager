@@ -85,6 +85,7 @@ global:
   [ slack_api_url: <secret> ]
   [ slack_api_url_file: <filepath> ]
   [ victorops_api_key: <secret> ]
+  [ victorops_api_key_file: <filepath> ]
   [ victorops_api_url: <string> | default = "https://alert.victorops.com/integrations/generic/20131114/alert/" ]
   [ pagerduty_url: <string> | default = "https://events.pagerduty.com/v2/enqueue" ]
   [ opsgenie_api_key: <secret> ]
@@ -640,11 +641,19 @@ PagerDuty provides [documentation](https://www.pagerduty.com/docs/guides/prometh
 # Whether to notify about resolved alerts.
 [ send_resolved: <boolean> | default = true ]
 
-# The following two options are mutually exclusive.
+# The routing and service keys are mutually exclusive.
 # The PagerDuty integration key (when using PagerDuty integration type `Events API v2`).
+# It is mutually exclusive with `routing_key_file`.
 routing_key: <tmpl_secret>
+# Read the Pager Duty routing key from a file.
+# It is mutually exclusive with `routing_key`.
+routing_key_file: <filepath>
 # The PagerDuty integration key (when using PagerDuty integration type `Prometheus`).
+# It is mutually exclusive with `service_key_file`.
 service_key: <tmpl_secret>
+# Read the Pager Duty service key from a file.
+# It is mutually exclusive with `service_key`.
+service_key_file: <filepath>
 
 # The URL to send API requests to
 [ url: <string> | default = global.pagerduty_url ]
@@ -659,6 +668,9 @@ service_key: <tmpl_secret>
 
 # Severity of the incident.
 [ severity: <tmpl_string> | default = 'error' ]
+
+# Unique location of the affected system.
+[ source: <tmpl_string> | default = client ]
 
 # A set of arbitrary key/value pairs that provide further detail
 # about the incident.
@@ -962,7 +974,12 @@ VictorOps notifications are sent out via the [VictorOps API](https://help.victor
 [ send_resolved: <boolean> | default = true ]
 
 # The API key to use when talking to the VictorOps API.
+# It is mutually exclusive with `api_key_file`.
 [ api_key: <secret> | default = global.victorops_api_key ]
+
+# Reads the API key to use when talking to the VictorOps API from a file.
+# It is mutually exclusive with `api_key`.
+[ api_key_file: <filepath> | default = global.victorops_api_key_file ]
 
 # The VictorOps API URL.
 [ api_url: <string> | default = global.victorops_api_url ]
