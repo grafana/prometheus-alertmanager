@@ -95,6 +95,7 @@ global:
   [ wechat_api_secret: <secret> ]
   [ wechat_api_corp_id: <string> ]
   [ telegram_api_url: <string> | default = "https://api.telegram.org" ]
+  [ webex_api_url: <string> | default = "https://webexapis.com/v1/messages" ]
   # The default HTTP client configuration
   [ http_config: <http_config> ]
 
@@ -424,6 +425,9 @@ authorization:
 oauth2:
   [ <oauth2> ]
 
+# Whether to enable HTTP2.
+[ enable_http2: <bool> | default: true ]
+
 # Optional proxy URL.
 [ proxy_url: <string> ]
 
@@ -463,6 +467,9 @@ endpoint_params:
 # Configures the token request's TLS settings.
 tls_config:
   [ <tls_config> ]
+
+# Optional proxy URL.
+[ proxy_url: <string> ]
 ```
 
 ## `<tls_config>`
@@ -483,6 +490,17 @@ A `tls_config` allows configuring TLS connections.
 
 # Disable validation of the server certificate.
 [ insecure_skip_verify: <boolean> | default = false]
+
+# Minimum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+# 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+# If unset, Prometheus will use Go default minimum version, which is TLS 1.2.
+# See MinVersion in https://pkg.go.dev/crypto/tls#Config.
+[ min_version: <string> ]
+# Maximum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
+# 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
+# If unset, Prometheus will use Go default maximum version, which is TLS 1.3.
+# See MaxVersion in https://pkg.go.dev/crypto/tls#Config.
+[ max_version: <string> ]
 ```
 
 ## `<receiver>`
@@ -516,6 +534,8 @@ wechat_configs:
   [ - <wechat_config>, ... ]
 telegram_configs:
   [ - <telegram_config>, ... ]
+webex_configs:
+  [ - <webex_config>, ... ]
 ```
 
 ## `<email_config>`
@@ -1110,5 +1130,24 @@ API](http://admin.wechat.com/wiki/index.php?title=Customer_Service_Messages).
 [ parse_mode: <string> | default = "MarkdownV2" ]
 
 # The HTTP client's configuration.
+[ http_config: <http_config> | default = global.http_config ]
+```
+
+## `<webex_config>`
+```yaml
+# Whether to notify about resolved alerts.
+[ send_resolved: <boolean> | default = true ]
+
+# The Webex Teams API URL i.e. https://webexapis.com/v1/messages
+# If not specified, default API URL will be used.
+[ api_url: <string> | default = global.webex_api_url ]
+
+# ID of the Webex Teams room where to send the messages.
+room_id: <string>
+
+# Message template
+[ message: <tmpl_string> default = '{{ template "webex.default.message" .}}' ]
+
+# The HTTP client's configuration. You must use this configuration to supply the bot token as part of the HTTP `Authorization` header. 
 [ http_config: <http_config> | default = global.http_config ]
 ```
