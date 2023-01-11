@@ -34,12 +34,35 @@ const (
 	maxMessageSize = 7439
 )
 
+type OnMarshallPayload func(context.Context, interface{}, []*types.Alert) (*bytes.Buffer, error)
+
+func marshallBody(_ context.Context, payload interface{}, _ []*types.Alert) (*bytes.Buffer, error) {
+	var buffer bytes.Buffer
+	if err := json.NewEncoder(&buffer).Encode(payload); err != nil {
+		return nil, err
+	}
+	return &buffer, nil
+}
+
+func WithCustomMarshall(f OnMarshallPayload) func(n *Notifier, err error) (*Notifier, error) {
+	return func(n *Notifier, err error) (*Notifier, error) {
+		if err != nil {
+			return n, err
+		}
+		m := *n
+		m.marshallBody = f
+		return &m, nil
+	}
+}
+
 type Notifier struct {
 	conf    *config.WebexConfig
 	tmpl    *template.Template
 	logger  log.Logger
 	client  *http.Client
 	retrier *notify.Retrier
+
+	marshallBody OnMarshallPayload
 }
 
 // New returns a new Webex notifier.
@@ -50,11 +73,12 @@ func New(c *config.WebexConfig, t *template.Template, l log.Logger, httpOpts ...
 	}
 
 	n := &Notifier{
-		conf:    c,
-		tmpl:    t,
-		logger:  l,
-		client:  client,
-		retrier: &notify.Retrier{},
+		conf:         c,
+		tmpl:         t,
+		logger:       l,
+		client:       client,
+		retrier:      &notify.Retrier{},
+		marshallBody: marshallBody,
 	}
 
 	return n, nil
@@ -95,12 +119,12 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		RoomID:   n.conf.RoomID,
 	}
 
-	var payload bytes.Buffer
-	if err = json.NewEncoder(&payload).Encode(w); err != nil {
+	payload, err := n.marshallBody(ctx, w, as)
+	if err != nil {
 		return false, err
 	}
 
-	resp, err := notify.PostJSON(ctx, n.client, n.conf.APIURL.String(), &payload)
+	resp, err := notify.PostJSON(ctx, n.client, n.conf.APIURL.String(), payload)
 	if err != nil {
 		return true, notify.RedactURL(err)
 	}
