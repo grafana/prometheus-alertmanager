@@ -18,8 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -31,6 +32,9 @@ import (
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/types"
 )
+
+// https://api.slack.com/reference/messaging/attachments#legacy_fields - 1024, no units given, assuming runes or characters.
+const maxTitleLenRunes = 1024
 
 // Notifier implements a Notifier for Slack notifications.
 type Notifier struct {
@@ -98,13 +102,14 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 	} else {
 		markdownIn = n.conf.MrkdwnIn
 	}
-	title, truncated := notify.Truncate(tmplText(n.conf.Title), 1024)
+
+	title, truncated := notify.TruncateInRunes(tmplText(n.conf.Title), maxTitleLenRunes)
 	if truncated {
 		key, err := notify.ExtractGroupKey(ctx)
 		if err != nil {
 			return false, err
 		}
-		level.Debug(n.logger).Log("msg", "Truncated title", "text", title, "key", key)
+		level.Warn(n.logger).Log("msg", "Truncated title", "key", key, "max_runes", maxTitleLenRunes)
 	}
 	att := &attachment{
 		Title:      title,
@@ -190,11 +195,11 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 	if n.conf.APIURL != nil {
 		u = n.conf.APIURL.String()
 	} else {
-		content, err := ioutil.ReadFile(n.conf.APIURLFile)
+		content, err := os.ReadFile(n.conf.APIURLFile)
 		if err != nil {
 			return false, err
 		}
-		u = string(content)
+		u = strings.TrimSpace(string(content))
 	}
 
 	resp, err := notify.PostJSON(ctx, n.client, u, &buf)

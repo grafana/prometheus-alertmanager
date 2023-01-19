@@ -21,6 +21,7 @@ package models
 
 import (
 	"strconv"
+	"context"
 
 	"github.com/go-openapi/errors"
 	"github.com/go-openapi/strfmt"
@@ -108,6 +109,11 @@ func (m *Receiver) validateName(formats strfmt.Registry) error {
 		return err
 	}
 
+	return nil
+}
+
+// ContextValidate validates this receiver based on context it is used
+func (m *Receiver) ContextValidate(ctx context.Context, formats strfmt.Registry) error {
 	return nil
 }
 

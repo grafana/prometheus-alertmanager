@@ -16,7 +16,7 @@ package template
 import (
 	"bytes"
 	tmplhtml "html/template"
-	"io/ioutil"
+	"io"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/prometheus/common/model"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/prometheus/alertmanager/asset"
 	"github.com/prometheus/alertmanager/types"
@@ -40,16 +42,24 @@ type Template struct {
 	ExternalURL *url.URL
 }
 
+// Option is generic modifier of the text and html templates used by a Template.
+type Option func(text *tmpltext.Template, html *tmplhtml.Template)
+
 // FromGlobs calls ParseGlob on all path globs provided and returns the
-// resulting Template.
-func FromGlobs(paths ...string) (*Template, error) {
+// resulting Template. Options allows customization of the text and html templates in given order.
+// The DefaultFuncs have precedence over any added custom functions.
+func FromGlobs(paths []string, options ...Option) (*Template, error) {
 	t := &Template{
 		text: tmpltext.New("").Option("missingkey=zero"),
 		html: tmplhtml.New("").Option("missingkey=zero"),
 	}
 
-	t.text = t.text.Funcs(tmpltext.FuncMap(DefaultFuncs))
-	t.html = t.html.Funcs(tmplhtml.FuncMap(DefaultFuncs))
+	for _, o := range options {
+		o(t.text, t.html)
+	}
+
+	t.text.Funcs(tmpltext.FuncMap(DefaultFuncs))
+	t.html.Funcs(tmplhtml.FuncMap(DefaultFuncs))
 
 	defaultTemplates := []string{"default.tmpl", "email.tmpl"}
 
@@ -59,7 +69,7 @@ func FromGlobs(paths ...string) (*Template, error) {
 			return nil, err
 		}
 		defer f.Close()
-		b, err := ioutil.ReadAll(f)
+		b, err := io.ReadAll(f)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +142,7 @@ type FuncMap map[string]interface{}
 var DefaultFuncs = FuncMap{
 	"toUpper": strings.ToUpper,
 	"toLower": strings.ToLower,
-	"title":   strings.Title,
+	"title":   cases.Title(language.AmericanEnglish).String,
 	// join is equal to strings.Join but inverts the argument order
 	// for easier pipelining in templates.
 	"join": func(sep string, s []string) string {

@@ -18,8 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-kit/log"
@@ -33,6 +33,9 @@ import (
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/types"
 )
+
+// https://docs.opsgenie.com/docs/alert-api - 130 characters meaning runes.
+const maxMessageLenRunes = 130
 
 // Notifier implements a Notifier for OpsGenie notifications.
 type Notifier struct {
@@ -171,9 +174,9 @@ func (n *Notifier) createRequests(ctx context.Context, as ...*types.Alert) ([]*h
 		}
 		requests = append(requests, req.WithContext(ctx))
 	default:
-		message, truncated := notify.Truncate(tmpl(n.conf.Message), 130)
+		message, truncated := notify.TruncateInRunes(tmpl(n.conf.Message), maxMessageLenRunes)
 		if truncated {
-			level.Debug(n.logger).Log("msg", "truncated message", "truncated_message", message, "alert", key)
+			level.Warn(n.logger).Log("msg", "Truncated message", "alert", key, "max_runes", maxMessageLenRunes)
 		}
 
 		createEndpointURL := n.conf.APIURL.Copy()
@@ -276,7 +279,7 @@ func (n *Notifier) createRequests(ctx context.Context, as ...*types.Alert) ([]*h
 	if n.conf.APIKey != "" {
 		apiKey = tmpl(string(n.conf.APIKey))
 	} else {
-		content, err := ioutil.ReadFile(n.conf.APIKeyFile)
+		content, err := os.ReadFile(n.conf.APIKeyFile)
 		if err != nil {
 			return nil, false, errors.Wrap(err, "read key_file error")
 		}
