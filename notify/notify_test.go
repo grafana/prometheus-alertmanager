@@ -379,20 +379,19 @@ func TestRoutingStage(t *testing.T) {
 func TestRetryStageWithError(t *testing.T) {
 	fail, retry := true, true
 	sent := []*types.Alert{}
-	i := Integration{
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
-			if fail {
-				fail = false
-				return retry, errors.New("fail to deliver notification")
-			}
-			sent = append(sent, alerts...)
-			return false, nil
-		}),
-		rs: sendResolved(false),
-	}
+	notifier := notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		if fail {
+			fail = false
+			return retry, errors.New("fail to deliver notification")
+		}
+		sent = append(sent, alerts...)
+		return false, nil
+	})
+	i := NewIntegration(notifier, sendResolved(false), "test integration", 1)
 	r := RetryStage{
 		integration: i,
 		metrics:     NewMetrics(prometheus.NewRegistry()),
+		groupName:   "test[0]",
 	}
 
 	alerts := []*types.Alert{
@@ -413,6 +412,10 @@ func TestRetryStageWithError(t *testing.T) {
 	require.Equal(t, alerts, sent)
 	require.NotNil(t, resctx)
 
+	// The integration should report no errors.
+	_, _, err = i.GetReport()
+	require.Nil(t, err)
+
 	// Notify with an unrecoverable error should fail.
 	sent = sent[:0]
 	fail = true
@@ -420,20 +423,23 @@ func TestRetryStageWithError(t *testing.T) {
 	resctx, _, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.NotNil(t, err)
 	require.NotNil(t, resctx)
+
+	// The integration should report an error.
+	_, _, err = i.GetReport()
+	require.EqualError(t, err, "fail to deliver notification")
 }
 
 func TestRetryStageNoResolved(t *testing.T) {
 	sent := []*types.Alert{}
-	i := Integration{
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
-			sent = append(sent, alerts...)
-			return false, nil
-		}),
-		rs: sendResolved(false),
-	}
+	notifier := notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		sent = append(sent, alerts...)
+		return false, nil
+	})
+	i := NewIntegration(notifier, sendResolved(false), "test integration", 1)
 	r := RetryStage{
 		integration: i,
 		metrics:     NewMetrics(prometheus.NewRegistry()),
+		groupName:   "test[0]",
 	}
 
 	alerts := []*types.Alert{
@@ -474,20 +480,23 @@ func TestRetryStageNoResolved(t *testing.T) {
 	require.Equal(t, alerts, res)
 	require.Equal(t, []*types.Alert{}, sent)
 	require.NotNil(t, resctx)
+
+	// The integration should report no errors.
+	_, _, err = i.GetReport()
+	require.Nil(t, err)
 }
 
 func TestRetryStageSendResolved(t *testing.T) {
 	sent := []*types.Alert{}
-	i := Integration{
-		notifier: notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
-			sent = append(sent, alerts...)
-			return false, nil
-		}),
-		rs: sendResolved(true),
-	}
+	notifier := notifierFunc(func(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+		sent = append(sent, alerts...)
+		return false, nil
+	})
+	i := NewIntegration(notifier, sendResolved(true), "test integration", 1)
 	r := RetryStage{
 		integration: i,
 		metrics:     NewMetrics(prometheus.NewRegistry()),
+		groupName:   "test[0]",
 	}
 
 	alerts := []*types.Alert{
@@ -522,6 +531,10 @@ func TestRetryStageSendResolved(t *testing.T) {
 	require.Equal(t, alerts, res)
 	require.Equal(t, alerts, sent)
 	require.NotNil(t, resctx)
+
+	// The integration should report no errors.
+	_, _, err = i.GetReport()
+	require.Nil(t, err)
 }
 
 func TestSetNotifiesStage(t *testing.T) {
