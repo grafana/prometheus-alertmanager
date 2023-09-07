@@ -289,7 +289,7 @@ func New(o Options) (*Log, error) {
 }
 
 func (l *Log) now() time.Time {
-	return l.clock.Now()
+	return l.clock.Now().UTC()
 }
 
 // Maintenance garbage collects the notification log state at the given interval. If the snapshot
