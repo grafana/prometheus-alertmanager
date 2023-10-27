@@ -396,7 +396,7 @@ func (pb *PipelineBuilder) New(
 	wait func() time.Duration,
 	inhibitor *inhibit.Inhibitor,
 	silencer *silence.Silencer,
-	times map[string][]timeinterval.TimeInterval,
+	intervener *timeinterval.Intervener,
 	notificationLog NotificationLog,
 	peer Peer,
 ) RoutingStage {
@@ -404,8 +404,8 @@ func (pb *PipelineBuilder) New(
 
 	ms := NewGossipSettleStage(peer)
 	is := NewMuteStage(inhibitor)
-	tas := NewTimeActiveStage(times)
-	tms := NewTimeMuteStage(times)
+	tas := NewTimeActiveStage(intervener)
+	tms := NewTimeMuteStage(intervener)
 	ss := NewMuteStage(silencer)
 
 	for _, r := range receivers {
@@ -539,15 +539,23 @@ func NewMuteStage(m types.Muter) *MuteStage {
 }
 
 // Exec implements the Stage interface.
-func (n *MuteStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
-	var filtered []*types.Alert
+func (n *MuteStage) Exec(ctx context.Context, logger log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	var (
+		filtered []*types.Alert
+		muted    []*types.Alert
+	)
 	for _, a := range alerts {
 		// TODO(fabxc): increment total alerts counter.
 		// Do not send the alert if muted.
-		if !n.muter.Mutes(a.Labels) {
+		if n.muter.Mutes(a.Labels) {
+			muted = append(muted, a)
+		} else {
 			filtered = append(filtered, a)
 		}
 		// TODO(fabxc): increment muted alerts counter if muted.
+	}
+	if len(muted) > 0 {
+		level.Debug(logger).Log("msg", "Notifications will not be sent for muted alerts", "alerts", fmt.Sprintf("%v", muted))
 	}
 	return ctx, filtered, nil
 }
@@ -813,12 +821,11 @@ func (r RetryStage) exec(ctx context.Context, l log.Logger, alerts ...*types.Ale
 		case <-tick.C:
 			now := time.Now()
 			retry, err := r.integration.Notify(ctx, sent...)
-
-			duration := time.Since(now)
-			r.metrics.notificationLatencySeconds.WithLabelValues(r.labelValues...).Observe(duration.Seconds())
+			dur := time.Since(now)
+			r.metrics.notificationLatencySeconds.WithLabelValues(r.labelValues...).Observe(dur.Seconds())
 			r.metrics.numNotificationRequestsTotal.WithLabelValues(r.labelValues...).Inc()
 
-			r.integration.Report(now, model.Duration(duration), err)
+			r.integration.Report(now, model.Duration(dur), err)
 			if err != nil {
 				r.metrics.numNotificationRequestsFailedTotal.WithLabelValues(r.labelValues...).Inc()
 				if !retry {
@@ -838,7 +845,7 @@ func (r RetryStage) exec(ctx context.Context, l log.Logger, alerts ...*types.Ale
 					lvl = level.Debug(log.With(l, "alerts", fmt.Sprintf("%v", alerts)))
 				}
 
-				lvl.Log("msg", "Notify success", "attempts", i)
+				lvl.Log("msg", "Notify success", "attempts", i, "duration", dur)
 				return ctx, alerts, nil
 			}
 		case <-ctx.Done():
@@ -893,13 +900,13 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 }
 
 type timeStage struct {
-	Times map[string][]timeinterval.TimeInterval
+	muter types.TimeMuter
 }
 
 type TimeMuteStage timeStage
 
-func NewTimeMuteStage(ti map[string][]timeinterval.TimeInterval) *TimeMuteStage {
-	return &TimeMuteStage{ti}
+func NewTimeMuteStage(m types.TimeMuter) *TimeMuteStage {
+	return &TimeMuteStage{m}
 }
 
 // Exec implements the stage interface for TimeMuteStage.
@@ -914,7 +921,12 @@ func (tms TimeMuteStage) Exec(ctx context.Context, l log.Logger, alerts ...*type
 		return ctx, alerts, errors.New("missing now timestamp")
 	}
 
-	muted, err := inTimeIntervals(now, tms.Times, muteTimeIntervalNames)
+	// Skip this stage if there are no mute timings.
+	if len(muteTimeIntervalNames) == 0 {
+		return ctx, alerts, nil
+	}
+
+	muted, err := tms.muter.Mutes(muteTimeIntervalNames, now)
 	if err != nil {
 		return ctx, alerts, err
 	}
@@ -929,8 +941,8 @@ func (tms TimeMuteStage) Exec(ctx context.Context, l log.Logger, alerts ...*type
 
 type TimeActiveStage timeStage
 
-func NewTimeActiveStage(ti map[string][]timeinterval.TimeInterval) *TimeActiveStage {
-	return &TimeActiveStage{ti}
+func NewTimeActiveStage(m types.TimeMuter) *TimeActiveStage {
+	return &TimeActiveStage{m}
 }
 
 // Exec implements the stage interface for TimeActiveStage.
@@ -951,32 +963,16 @@ func (tas TimeActiveStage) Exec(ctx context.Context, l log.Logger, alerts ...*ty
 		return ctx, alerts, errors.New("missing now timestamp")
 	}
 
-	active, err := inTimeIntervals(now, tas.Times, activeTimeIntervalNames)
+	muted, err := tas.muter.Mutes(activeTimeIntervalNames, now)
 	if err != nil {
 		return ctx, alerts, err
 	}
 
 	// If the current time is not inside an active time, all alerts are removed from the pipeline
-	if !active {
+	if !muted {
 		level.Debug(l).Log("msg", "Notifications not sent, route is not within active time")
 		return ctx, nil, nil
 	}
 
 	return ctx, alerts, nil
-}
-
-// inTimeIntervals returns true if the current time is contained in one of the given time intervals.
-func inTimeIntervals(now time.Time, intervals map[string][]timeinterval.TimeInterval, intervalNames []string) (bool, error) {
-	for _, name := range intervalNames {
-		interval, ok := intervals[name]
-		if !ok {
-			return false, errors.Errorf("time interval %s doesn't exist in config", name)
-		}
-		for _, ti := range interval {
-			if ti.ContainsTime(now.UTC()) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
