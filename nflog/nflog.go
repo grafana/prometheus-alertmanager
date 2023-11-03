@@ -410,7 +410,7 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 	}
 	l.st.merge(e, l.now())
 	l.broadcast(b)
-	level.Info(l.logger).Log("nflog", "gkey", gkey, "timestamp", now)
+	level.Info(l.logger).Log("nflog gkey", gkey, "timestamp", now)
 
 	return nil
 }

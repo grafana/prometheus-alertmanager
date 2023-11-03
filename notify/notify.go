@@ -591,10 +591,12 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 	// If we haven't notified about the alert group before, notify right away
 	// unless we only have resolved alerts.
 	if entry == nil {
+		fmt.Printf("entry:%d", len(firing))
 		return len(firing) > 0
 	}
 
 	if !entry.IsFiringSubset(firing) {
+		fmt.Println("IsFiringSubset")
 		return true
 	}
 
