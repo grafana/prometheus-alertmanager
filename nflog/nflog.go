@@ -404,13 +404,13 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 		},
 		ExpiresAt: expiresAt,
 	}
-
 	b, err := marshalMeshEntry(e)
 	if err != nil {
 		return err
 	}
 	l.st.merge(e, l.now())
 	l.broadcast(b)
+	level.Info(l.logger).Log("nflog", "gkey", gkey, "timestamp", now)
 
 	return nil
 }
