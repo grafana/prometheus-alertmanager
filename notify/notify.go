@@ -667,11 +667,12 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 				resolved = append(resolved, era)
 			}
 		}
-		ctx = WithFiringAlerts(ctx, firing)
-		ctx = WithResolvedAlerts(ctx, resolved)
 	default:
 		return ctx, nil, errors.Errorf("unexpected entry result size %d", len(entries))
 	}
+
+	ctx = WithFiringAlerts(ctx, firing)
+	ctx = WithResolvedAlerts(ctx, resolved)
 
 	if n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval) {
 		return ctx, alerts, nil
