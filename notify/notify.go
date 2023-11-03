@@ -673,7 +673,6 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 
 	ctx = WithFiringAlerts(ctx, firing)
 	ctx = WithResolvedAlerts(ctx, resolved)
-
 	if n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval) {
 		return ctx, alerts, nil
 	}
