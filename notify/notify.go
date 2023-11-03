@@ -614,7 +614,7 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 	}
 
 	// Nothing changed, only notify if the repeat interval has passed.
-	fmt.Printf("DedupStage, gkey:%s,Timestamp:%s,now:%s\n", string(entry.GroupKey), entry.Timestamp, n.now)
+	fmt.Printf("DedupStage, gkey:%s,Timestamp:%s,now:%s\n", string(entry.GroupKey), entry.Timestamp, n.now())
 	return entry.Timestamp.Before(n.now().Add(-repeat))
 }
 
