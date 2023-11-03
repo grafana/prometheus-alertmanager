@@ -657,10 +657,15 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 	case 1:
 		entry = entries[0]
 		for _, efa := range entry.FiringAlerts {
-			firing = append(firing, efa)
+			if _, has := firingSet[efa]; !has {
+				firing = append(firing, efa)
+			}
+
 		}
 		for _, era := range entry.ResolvedAlerts {
-			resolved = append(firing, era)
+			if _, has := firingSet[era]; has {
+				resolved = append(resolved, era)
+			}
 		}
 		ctx = WithFiringAlerts(ctx, firing)
 		ctx = WithResolvedAlerts(ctx, resolved)
