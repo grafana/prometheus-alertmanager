@@ -591,12 +591,10 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 	// If we haven't notified about the alert group before, notify right away
 	// unless we only have resolved alerts.
 	if entry == nil {
-		fmt.Printf("entry:%d", len(firing))
 		return len(firing) > 0
 	}
 
 	if !entry.IsFiringSubset(firing) {
-		fmt.Println("IsFiringSubset")
 		return true
 	}
 
@@ -616,7 +614,6 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 	}
 
 	// Nothing changed, only notify if the repeat interval has passed.
-	fmt.Printf("DedupStage, gkey:%s,Timestamp:%s,now:%s\n", string(entry.GroupKey), entry.Timestamp, n.now())
 	return entry.Timestamp.Before(n.now().Add(-repeat))
 }
 
@@ -649,9 +646,6 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 		}
 	}
 
-	ctx = WithFiringAlerts(ctx, firing)
-	ctx = WithResolvedAlerts(ctx, resolved)
-
 	entries, err := n.nflog.Query(nflog.QGroupKey(gkey), nflog.QReceiver(n.recv))
 	if err != nil && err != nflog.ErrNotFound {
 		return ctx, nil, err
@@ -662,6 +656,14 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 	case 0:
 	case 1:
 		entry = entries[0]
+		for _, efa := range entry.FiringAlerts {
+			firing = append(firing, efa)
+		}
+		for _, era := range entry.ResolvedAlerts {
+			resolved = append(firing, era)
+		}
+		ctx = WithFiringAlerts(ctx, firing)
+		ctx = WithResolvedAlerts(ctx, resolved)
 	default:
 		return ctx, nil, errors.Errorf("unexpected entry result size %d", len(entries))
 	}
