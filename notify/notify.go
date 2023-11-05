@@ -657,15 +657,19 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 	case 1:
 		entry = entries[0]
 		for _, efa := range entry.FiringAlerts {
-			if _, has := firingSet[efa]; !has {
-				firing = append(firing, efa)
+			if _, has := firingSet[efa]; has {
+				continue
 			}
-
+			if _, has := resolvedSet[efa]; has {
+				continue
+			}
+			firing = append(firing, efa)
 		}
 		for _, era := range entry.ResolvedAlerts {
-			if _, has := resolvedSet[era]; has {
-				resolved = append(resolved, era)
+			if _, has := firingSet[era]; has {
+				continue
 			}
+			resolved = append(resolved, era)
 		}
 	default:
 		return ctx, nil, errors.Errorf("unexpected entry result size %d", len(entries))
