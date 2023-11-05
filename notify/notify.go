@@ -663,7 +663,7 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 
 		}
 		for _, era := range entry.ResolvedAlerts {
-			if _, has := firingSet[era]; has {
+			if _, has := resolvedSet[era]; has {
 				resolved = append(resolved, era)
 			}
 		}
