@@ -656,6 +656,14 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 	case 0:
 	case 1:
 		entry = entries[0]
+		logResolvedSet := map[uint64]struct{}{}
+		for _, era := range entry.ResolvedAlerts {
+			logResolvedSet[era] = struct{}{}
+			if _, has := firingSet[era]; has {
+				continue
+			}
+			resolved = append(resolved, era)
+		}
 		for _, efa := range entry.FiringAlerts {
 			if _, has := firingSet[efa]; has {
 				continue
@@ -663,14 +671,12 @@ func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Al
 			if _, has := resolvedSet[efa]; has {
 				continue
 			}
-			firing = append(firing, efa)
-		}
-		for _, era := range entry.ResolvedAlerts {
-			if _, has := firingSet[era]; has {
+			if _, has := logResolvedSet[efa]; has {
 				continue
 			}
-			resolved = append(resolved, era)
+			firing = append(firing, efa)
 		}
+
 	default:
 		return ctx, nil, errors.Errorf("unexpected entry result size %d", len(entries))
 	}
