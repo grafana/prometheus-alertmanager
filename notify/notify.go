@@ -407,7 +407,8 @@ func (rs RoutingStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.
 
 	s, ok := rs[receiver]
 	if !ok {
-		return ctx, nil, errors.New("stage for receiver missing")
+		return ctx, nil, errors.Errorf("stage [%s] for receiver missing", receiver)
+
 	}
 
 	return s.Exec(ctx, l, alerts...)
