@@ -342,7 +342,6 @@ func run() int {
 
 		pipeline := pipelineBuilder.New(
 			activeReceivers,
-			waitFunc,
 			inhibitor,
 			silencer,
 			timeIntervals,
