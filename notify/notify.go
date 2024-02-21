@@ -336,6 +336,7 @@ func NewPipelineBuilder(r prometheus.Registerer) *PipelineBuilder {
 
 // New returns a map of receivers to Stages.
 func (pb *PipelineBuilder) New(
+	rdb redis.Cmdable,
 	receivers []*Receiver,
 	inhibitor *inhibit.Inhibitor,
 	silencer *silence.Silencer,
@@ -348,7 +349,7 @@ func (pb *PipelineBuilder) New(
 	ss := NewMuteStage(silencer)
 
 	for _, r := range receivers {
-		st := createReceiverStage(r, pb.metrics)
+		st := createReceiverStage(r, pb.metrics, rdb)
 		rs[r.groupName] = MultiStage{is, tas, tms, ss, st}
 	}
 	return rs
@@ -358,6 +359,7 @@ func (pb *PipelineBuilder) New(
 func createReceiverStage(
 	receiver *Receiver,
 	metrics *Metrics,
+	rdb redis.Cmdable,
 ) Stage {
 	var fs FanoutStage
 	for i := range receiver.integrations {
@@ -367,7 +369,7 @@ func createReceiverStage(
 			Idx:         uint32(receiver.integrations[i].Index()),
 		}
 		var s MultiStage
-		s = append(s, NewDedupStage(receiver.integrations[i], recv))
+		s = append(s, NewDedupStage(rdb, receiver.integrations[i], recv))
 		s = append(s, NewRetryStage(receiver.integrations[i], receiver.groupName, metrics))
 
 		fs = append(fs, s)
@@ -483,8 +485,9 @@ type DedupStage struct {
 }
 
 // NewDedupStage wraps a DedupStage that runs against the given notification log.
-func NewDedupStage(rs ResolvedSender, recv *nflogpb.Receiver) *DedupStage {
+func NewDedupStage(rdb redis.Cmdable, rs ResolvedSender, recv *nflogpb.Receiver) *DedupStage {
 	return &DedupStage{
+		rdb:  rdb,
 		rs:   rs,
 		recv: recv,
 		now:  now,

@@ -341,6 +341,7 @@ func run() int {
 		}
 
 		pipeline := pipelineBuilder.New(
+			nil,
 			activeReceivers,
 			inhibitor,
 			silencer,
