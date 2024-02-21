@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -499,11 +500,11 @@ func now() time.Time {
 }
 
 func stateKey(k string, r *nflogpb.Receiver, hash string) string {
-	return fmt.Sprintf("%s:%s:%s:%v", k, receiverKey(r), hash)
+	return fmt.Sprintf("%s:%s:%s", k, receiverKey(r), hash)
 }
 
 func receiverKey(r *nflogpb.Receiver) string {
-	return fmt.Sprintf("%s/%s/%d", r.GroupName, r.Integration, r.Idx)
+	return fmt.Sprintf("%s:%s:%d", r.GroupName, r.Integration, r.Idx)
 }
 
 // Exec implements the Stage interface.
@@ -526,11 +527,12 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 	for _, a := range alerts {
 		labels := AlertLabels(a.Labels)
 		_, hash, _ := labels.hashAlert()
+		sKey := stateKey(gkey, n.recv, hash)
 		if a.Resolved() {
 			resolved = append(resolved, hash)
-			exist, err := n.rdb.Exists(ctx, stateKey(gkey, n.recv, hash)).Result()
+			exist, err := n.rdb.Exists(ctx, sKey).Result()
 			if err != nil {
-				level.Error(l).Log("msg", "Exist stateKey from redis failed", "stateKey", stateKey(gkey, n.recv, hash), "err", err)
+				level.Error(l).Log("msg", "Exist stateKey from redis failed", "stateKey", sKey, "err", err)
 				continue
 			}
 			// If the firing alert send, need send resolved message, otherwise, no need.
@@ -538,13 +540,14 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 				needsUpdateAlerts = append(needsUpdateAlerts, a)
 			}
 		} else {
-			firing = append(firing, hash)
-			needsUpdate, err := n.rdb.SetNX(ctx, stateKey(gkey, n.recv, hash), flushTime, repeatInterval).Result()
+			needsUpdate, err := n.rdb.SetNX(ctx, sKey, flushTime, repeatInterval).Result()
 			if err != nil {
-				level.Error(l).Log("msg", "Set stateKey to redis failed", "stateKey", stateKey(gkey, n.recv, hash), "err", err)
+				level.Error(l).Log("msg", "Set stateKey to redis failed", "stateKey", sKey, "err", err)
 				continue
 			}
+			level.Info(l).Log("msg", "Set stateKey to redis success", "stateKey", sKey)
 			if needsUpdate {
+				firing = append(firing, hash)
 				needsUpdateAlerts = append(needsUpdateAlerts, a)
 			}
 		}
@@ -707,6 +710,10 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	stateKeys := make([]string, len(resolved))
 	for _, hash := range resolved {
 		stateKeys = append(stateKeys, stateKey(gkey, n.recv, hash))
+	}
+	err := n.rdb.Del(ctx, stateKeys...).Err()
+	if err == nil {
+		level.Info(l).Log("msg", "Del stateKeys to redis success", "stateKeys", strings.Join(stateKeys, ","))
 	}
 	return ctx, alerts, n.rdb.Del(ctx, stateKeys...).Err()
 }
