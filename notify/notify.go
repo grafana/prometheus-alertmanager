@@ -545,9 +545,9 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 				level.Error(l).Log("msg", "Set stateKey to redis failed", "stateKey", sKey, "err", err)
 				continue
 			}
-			level.Info(l).Log("msg", "Set stateKey to redis success", "stateKey", sKey)
 			if needsUpdate {
 				firing = append(firing, hash)
+				level.Info(l).Log("msg", "Set stateKey to redis success", "stateKey", sKey)
 				needsUpdateAlerts = append(needsUpdateAlerts, a)
 			}
 		}
