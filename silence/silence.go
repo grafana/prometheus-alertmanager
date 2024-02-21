@@ -36,7 +36,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 
-	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/pkg/labels"
 	pb "github.com/prometheus/alertmanager/silence/silencepb"
 	"github.com/prometheus/alertmanager/types"
@@ -883,15 +882,6 @@ func (s *Silences) Merge(b []byte) error {
 	for _, e := range st {
 		if merged := s.st.merge(e, now); merged {
 			s.version++
-			if !cluster.OversizedMessage(b) {
-				// If this is the first we've seen the message and it's
-				// not oversized, gossip it to other nodes. We don't
-				// propagate oversized messages because they're sent to
-				// all nodes already.
-				s.broadcast(b)
-				s.metrics.propagatedMessagesTotal.Inc()
-				level.Debug(s.logger).Log("msg", "Gossiping new silence", "silence", e)
-			}
 		}
 	}
 	return nil

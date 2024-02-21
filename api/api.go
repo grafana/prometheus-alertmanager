@@ -27,7 +27,6 @@ import (
 
 	apiv1 "github.com/prometheus/alertmanager/api/v1"
 	apiv2 "github.com/prometheus/alertmanager/api/v2"
-	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/dispatch"
 	"github.com/prometheus/alertmanager/notify"
@@ -56,8 +55,6 @@ type Options struct {
 	// StatusFunc is used be the API to retrieve the AlertStatus of an
 	// alert. Mandatory.
 	StatusFunc func(model.Fingerprint) types.AlertStatus
-	// Peer from the gossip cluster. If nil, no clustering will be used.
-	Peer cluster.ClusterPeer
 	// Timeout for all HTTP connections. The zero value (and negative
 	// values) result in no timeout.
 	Timeout time.Duration
@@ -115,7 +112,6 @@ func New(opts Options) (*API, error) {
 		opts.Alerts,
 		opts.Silences,
 		opts.StatusFunc,
-		opts.Peer,
 		log.With(l, "version", "v1"),
 		opts.Registry,
 	)
@@ -125,7 +121,6 @@ func New(opts Options) (*API, error) {
 		opts.GroupFunc,
 		opts.StatusFunc,
 		opts.Silences,
-		opts.Peer,
 		log.With(l, "version", "v2"),
 		opts.Registry,
 	)

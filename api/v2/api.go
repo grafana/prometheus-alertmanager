@@ -42,7 +42,6 @@ import (
 	silence_ops "github.com/prometheus/alertmanager/api/v2/restapi/operations/silence"
 
 	"github.com/prometheus/alertmanager/api/metrics"
-	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/dispatch"
 	"github.com/prometheus/alertmanager/notify"
@@ -55,7 +54,6 @@ import (
 
 // API represents an Alertmanager API v2
 type API struct {
-	peer           cluster.ClusterPeer
 	silences       *silence.Silences
 	alerts         provider.Alerts
 	alertGroups    groupsFn
@@ -89,7 +87,6 @@ func NewAPI(
 	gf groupsFn,
 	sf getAlertStatusFn,
 	silences *silence.Silences,
-	peer cluster.ClusterPeer,
 	l log.Logger,
 	r prometheus.Registerer,
 ) (*API, error) {
@@ -97,7 +94,6 @@ func NewAPI(
 		alerts:         alerts,
 		getAlertStatus: sf,
 		alertGroups:    gf,
-		peer:           peer,
 		silences:       silences,
 		logger:         l,
 		m:              metrics.NewAlerts("v2", r),
@@ -192,31 +188,6 @@ func (api *API) getStatusHandler(params general_ops.GetStatusParams) middleware.
 			Status: &status,
 			Peers:  []*open_api_models.PeerStatus{},
 		},
-	}
-
-	// If alertmanager cluster feature is disabled, then api.peers == nil.
-	if api.peer != nil {
-		status := api.peer.Status()
-
-		peers := []*open_api_models.PeerStatus{}
-		for _, n := range api.peer.Peers() {
-			address := n.Address()
-			name := n.Name()
-			peers = append(peers, &open_api_models.PeerStatus{
-				Name:    &name,
-				Address: &address,
-			})
-		}
-
-		sort.Slice(peers, func(i, j int) bool {
-			return *peers[i].Name < *peers[j].Name
-		})
-
-		resp.Cluster = &open_api_models.ClusterStatus{
-			Name:   api.peer.Name(),
-			Status: &status,
-			Peers:  peers,
-		}
 	}
 
 	return general_ops.NewGetStatusOK().WithPayload(&resp)

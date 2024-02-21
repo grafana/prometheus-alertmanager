@@ -31,7 +31,6 @@ import (
 	"github.com/prometheus/common/version"
 
 	"github.com/prometheus/alertmanager/api/metrics"
-	"github.com/prometheus/alertmanager/cluster"
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/dispatch"
 	"github.com/prometheus/alertmanager/pkg/labels"
@@ -72,7 +71,6 @@ type API struct {
 	config   *config.Config
 	route    *dispatch.Route
 	uptime   time.Time
-	peer     cluster.ClusterPeer
 	logger   log.Logger
 	m        *metrics.Alerts
 
@@ -88,7 +86,6 @@ func New(
 	alerts provider.Alerts,
 	silences *silence.Silences,
 	sf getAlertStatusFn,
-	peer cluster.ClusterPeer,
 	l log.Logger,
 	r prometheus.Registerer,
 ) *API {
@@ -101,7 +98,6 @@ func New(
 		silences:       silences,
 		getAlertStatus: sf,
 		uptime:         time.Now(),
-		peer:           peer,
 		logger:         l,
 		m:              metrics.NewAlerts("v1", r),
 	}
@@ -188,8 +184,7 @@ func (api *API) status(w http.ResponseWriter, req *http.Request) {
 			"buildDate": version.BuildDate,
 			"goVersion": version.GoVersion,
 		},
-		Uptime:        api.uptime,
-		ClusterStatus: getClusterStatus(api.peer),
+		Uptime: api.uptime,
 	}
 
 	api.mtx.RUnlock()
@@ -206,21 +201,6 @@ type clusterStatus struct {
 	Name   string       `json:"name"`
 	Status string       `json:"status"`
 	Peers  []peerStatus `json:"peers"`
-}
-
-func getClusterStatus(p cluster.ClusterPeer) *clusterStatus {
-	if p == nil {
-		return nil
-	}
-	s := &clusterStatus{Name: p.Name(), Status: p.Status()}
-
-	for _, n := range p.Peers() {
-		s.Peers = append(s.Peers, peerStatus{
-			Name:    n.Name(),
-			Address: n.Address(),
-		})
-	}
-	return s
 }
 
 func (api *API) listAlerts(w http.ResponseWriter, r *http.Request) {

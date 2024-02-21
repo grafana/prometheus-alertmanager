@@ -15,21 +15,22 @@ package notify
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/cespare/xxhash/v2"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/prometheus/alertmanager/inhibit"
-	"github.com/prometheus/alertmanager/nflog"
 	"github.com/prometheus/alertmanager/nflog/nflogpb"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/timeinterval"
@@ -39,12 +40,6 @@ import (
 // ResolvedSender returns true if resolved notifications should be sent.
 type ResolvedSender interface {
 	SendResolved() bool
-}
-
-// Peer represents the cluster node from where we are the sending the notification.
-type Peer interface {
-	// WaitReady waits until the node silences and notifications have settled before attempting to send a notification.
-	WaitReady(context.Context) error
 }
 
 // MinTimeout is the minimum timeout that is set for the context of a call
@@ -150,12 +145,12 @@ func WithGroupKey(ctx context.Context, s string) context.Context {
 }
 
 // WithFiringAlerts populates a context with a slice of firing alerts.
-func WithFiringAlerts(ctx context.Context, alerts []uint64) context.Context {
+func WithFiringAlerts(ctx context.Context, alerts []string) context.Context {
 	return context.WithValue(ctx, keyFiringAlerts, alerts)
 }
 
 // WithResolvedAlerts populates a context with a slice of resolved alerts.
-func WithResolvedAlerts(ctx context.Context, alerts []uint64) context.Context {
+func WithResolvedAlerts(ctx context.Context, alerts []string) context.Context {
 	return context.WithValue(ctx, keyResolvedAlerts, alerts)
 }
 
@@ -220,15 +215,15 @@ func Now(ctx context.Context) (time.Time, bool) {
 
 // FiringAlerts extracts a slice of firing alerts from the context.
 // Iff none exists, the second argument is false.
-func FiringAlerts(ctx context.Context) ([]uint64, bool) {
-	v, ok := ctx.Value(keyFiringAlerts).([]uint64)
+func FiringAlerts(ctx context.Context) ([]string, bool) {
+	v, ok := ctx.Value(keyFiringAlerts).([]string)
 	return v, ok
 }
 
 // ResolvedAlerts extracts a slice of firing alerts from the context.
 // Iff none exists, the second argument is false.
-func ResolvedAlerts(ctx context.Context) ([]uint64, bool) {
-	v, ok := ctx.Value(keyResolvedAlerts).([]uint64)
+func ResolvedAlerts(ctx context.Context) ([]string, bool) {
+	v, ok := ctx.Value(keyResolvedAlerts).([]string)
 	return v, ok
 }
 
@@ -257,11 +252,6 @@ type StageFunc func(ctx context.Context, l log.Logger, alerts ...*types.Alert) (
 // Exec implements Stage interface.
 func (f StageFunc) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
 	return f(ctx, l, alerts...)
-}
-
-type NotificationLog interface {
-	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
-	Query(params ...nflog.QueryParam) ([]*nflogpb.Entry, error)
 }
 
 type Metrics struct {
@@ -347,24 +337,19 @@ func NewPipelineBuilder(r prometheus.Registerer) *PipelineBuilder {
 // New returns a map of receivers to Stages.
 func (pb *PipelineBuilder) New(
 	receivers []*Receiver,
-	wait func() time.Duration,
 	inhibitor *inhibit.Inhibitor,
 	silencer *silence.Silencer,
 	times map[string][]timeinterval.TimeInterval,
-	notificationLog NotificationLog,
-	peer Peer,
 ) RoutingStage {
 	rs := make(RoutingStage, len(receivers))
-
-	ms := NewGossipSettleStage(peer)
 	is := NewMuteStage(inhibitor)
 	tas := NewTimeActiveStage(times)
 	tms := NewTimeMuteStage(times)
 	ss := NewMuteStage(silencer)
 
 	for _, r := range receivers {
-		st := createReceiverStage(r, wait, notificationLog, pb.metrics)
-		rs[r.groupName] = MultiStage{ms, is, tas, tms, ss, st}
+		st := createReceiverStage(r, pb.metrics)
+		rs[r.groupName] = MultiStage{is, tas, tms, ss, st}
 	}
 	return rs
 }
@@ -372,8 +357,6 @@ func (pb *PipelineBuilder) New(
 // createReceiverStage creates a pipeline of stages for a receiver.
 func createReceiverStage(
 	receiver *Receiver,
-	wait func() time.Duration,
-	notificationLog NotificationLog,
 	metrics *Metrics,
 ) Stage {
 	var fs FanoutStage
@@ -384,10 +367,8 @@ func createReceiverStage(
 			Idx:         uint32(receiver.integrations[i].Index()),
 		}
 		var s MultiStage
-		s = append(s, NewWaitStage(wait))
-		s = append(s, NewDedupStage(receiver.integrations[i], notificationLog, recv))
+		s = append(s, NewDedupStage(receiver.integrations[i], recv))
 		s = append(s, NewRetryStage(receiver.integrations[i], receiver.groupName, metrics))
-		s = append(s, NewSetNotifiesStage(notificationLog, recv))
 
 		fs = append(fs, s)
 	}
@@ -461,25 +442,6 @@ func (fs FanoutStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.A
 	return ctx, alerts, nil
 }
 
-// GossipSettleStage waits until the Gossip has settled to forward alerts.
-type GossipSettleStage struct {
-	peer Peer
-}
-
-// NewGossipSettleStage returns a new GossipSettleStage.
-func NewGossipSettleStage(p Peer) *GossipSettleStage {
-	return &GossipSettleStage{peer: p}
-}
-
-func (n *GossipSettleStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
-	if n.peer != nil {
-		if err := n.peer.WaitReady(ctx); err != nil {
-			return ctx, nil, err
-		}
-	}
-	return ctx, alerts, nil
-}
-
 // MuteStage filters alerts through a Muter.
 type MuteStage struct {
 	muter types.Muter
@@ -510,185 +472,84 @@ type WaitStage struct {
 	wait func() time.Duration
 }
 
-// NewWaitStage returns a new WaitStage.
-func NewWaitStage(wait func() time.Duration) *WaitStage {
-	return &WaitStage{
-		wait: wait,
-	}
-}
-
-// Exec implements the Stage interface.
-func (ws *WaitStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
-	select {
-	case <-time.After(ws.wait()):
-	case <-ctx.Done():
-		return ctx, nil, ctx.Err()
-	}
-	return ctx, alerts, nil
-}
-
 // DedupStage filters alerts.
 // Filtering happens based on a notification log.
 type DedupStage struct {
-	rs    ResolvedSender
-	nflog NotificationLog
-	recv  *nflogpb.Receiver
-
+	rs   ResolvedSender
+	recv *nflogpb.Receiver
+	rdb  redis.Cmdable
 	now  func() time.Time
 	hash func(*types.Alert) uint64
 }
 
 // NewDedupStage wraps a DedupStage that runs against the given notification log.
-func NewDedupStage(rs ResolvedSender, l NotificationLog, recv *nflogpb.Receiver) *DedupStage {
+func NewDedupStage(rs ResolvedSender, recv *nflogpb.Receiver) *DedupStage {
 	return &DedupStage{
-		rs:    rs,
-		nflog: l,
-		recv:  recv,
-		now:   utcNow,
-		hash:  hashAlert,
+		rs:   rs,
+		recv: recv,
+		now:  now,
 	}
 }
 
-func utcNow() time.Time {
-	return time.Now().UTC()
+func now() time.Time {
+	return time.Now()
 }
 
-// Wrap a slice in a struct so we can store a pointer in sync.Pool
-type hashBuffer struct {
-	buf []byte
+func stateKey(k string, r *nflogpb.Receiver, hash string) string {
+	return fmt.Sprintf("%s:%s:%s:%v", k, receiverKey(r), hash)
 }
 
-var hashBuffers = sync.Pool{
-	New: func() interface{} { return &hashBuffer{buf: make([]byte, 0, 1024)} },
-}
-
-func hashAlert(a *types.Alert) uint64 {
-	const sep = '\xff'
-
-	hb := hashBuffers.Get().(*hashBuffer)
-	defer hashBuffers.Put(hb)
-	b := hb.buf[:0]
-
-	names := make(model.LabelNames, 0, len(a.Labels))
-
-	for ln := range a.Labels {
-		names = append(names, ln)
-	}
-	sort.Sort(names)
-
-	for _, ln := range names {
-		b = append(b, string(ln)...)
-		b = append(b, sep)
-		b = append(b, string(a.Labels[ln])...)
-		b = append(b, sep)
-	}
-
-	hash := xxhash.Sum64(b)
-
-	return hash
-}
-
-func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint64]struct{}, repeat time.Duration) bool {
-	// If we haven't notified about the alert group before, notify right away
-	// unless we only have resolved alerts.
-	if entry == nil {
-		return len(firing) > 0
-	}
-
-	if !entry.IsFiringSubset(firing) {
-		return true
-	}
-
-	// Notify about all alerts being resolved.
-	// This is done irrespective of the send_resolved flag to make sure that
-	// the firing alerts are cleared from the notification log.
-	if len(firing) == 0 {
-		// If the current alert group and last notification contain no firing
-		// alert, it means that some alerts have been fired and resolved during the
-		// last interval. In this case, there is no need to notify the receiver
-		// since it doesn't know about them.
-		return len(entry.FiringAlerts) > 0
-	}
-
-	if n.rs.SendResolved() && !entry.IsResolvedSubset(resolved) {
-		return true
-	}
-
-	// Nothing changed, only notify if the repeat interval has passed.
-	return entry.Timestamp.Before(n.now().Add(-repeat))
+func receiverKey(r *nflogpb.Receiver) string {
+	return fmt.Sprintf("%s/%s/%d", r.GroupName, r.Integration, r.Idx)
 }
 
 // Exec implements the Stage interface.
-func (n *DedupStage) Exec(ctx context.Context, _ log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
 	gkey, ok := GroupKey(ctx)
 	if !ok {
 		return ctx, nil, errors.New("group key missing")
 	}
-
 	repeatInterval, ok := RepeatInterval(ctx)
 	if !ok {
 		return ctx, nil, errors.New("repeat interval missing")
 	}
-
-	firingSet := map[uint64]struct{}{}
-	resolvedSet := map[uint64]struct{}{}
-	firing := []uint64{}
-	resolved := []uint64{}
-
-	var hash uint64
+	flushTime, ok := Now(ctx)
+	if !ok {
+		flushTime = n.now()
+	}
+	var firing []string
+	var resolved []string
+	needsUpdateAlerts := make([]*types.Alert, 0)
 	for _, a := range alerts {
-		hash = n.hash(a)
+		labels := AlertLabels(a.Labels)
+		_, hash, _ := labels.hashAlert()
 		if a.Resolved() {
 			resolved = append(resolved, hash)
-			resolvedSet[hash] = struct{}{}
+			exist, err := n.rdb.Exists(ctx, stateKey(gkey, n.recv, hash)).Result()
+			if err != nil {
+				level.Error(l).Log("msg", "Exist stateKey from redis failed", "stateKey", stateKey(gkey, n.recv, hash), "err", err)
+				continue
+			}
+			// If the firing alert send, need send resolved message, otherwise, no need.
+			if exist == 1 {
+				needsUpdateAlerts = append(needsUpdateAlerts, a)
+			}
 		} else {
 			firing = append(firing, hash)
-			firingSet[hash] = struct{}{}
+			needsUpdate, err := n.rdb.SetNX(ctx, stateKey(gkey, n.recv, hash), flushTime, repeatInterval).Result()
+			if err != nil {
+				level.Error(l).Log("msg", "Set stateKey to redis failed", "stateKey", stateKey(gkey, n.recv, hash), "err", err)
+				continue
+			}
+			if needsUpdate {
+				needsUpdateAlerts = append(needsUpdateAlerts, a)
+			}
 		}
 	}
-
-	entries, err := n.nflog.Query(nflog.QGroupKey(gkey), nflog.QReceiver(n.recv))
-	if err != nil && err != nflog.ErrNotFound {
-		return ctx, nil, err
-	}
-
-	var entry *nflogpb.Entry
-	switch len(entries) {
-	case 0:
-	case 1:
-		entry = entries[0]
-		logResolvedSet := map[uint64]struct{}{}
-		for _, era := range entry.ResolvedAlerts {
-			logResolvedSet[era] = struct{}{}
-			if _, has := firingSet[era]; has {
-				continue
-			}
-			resolved = append(resolved, era)
-		}
-		for _, efa := range entry.FiringAlerts {
-			if _, has := firingSet[efa]; has {
-				continue
-			}
-			if _, has := resolvedSet[efa]; has {
-				continue
-			}
-			if _, has := logResolvedSet[efa]; has {
-				continue
-			}
-			firing = append(firing, efa)
-		}
-
-	default:
-		return ctx, nil, errors.Errorf("unexpected entry result size %d", len(entries))
-	}
-
 	ctx = WithFiringAlerts(ctx, firing)
 	ctx = WithResolvedAlerts(ctx, resolved)
 
-	if n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval) {
-		return ctx, alerts, nil
-	}
-	return ctx, nil, nil
+	return ctx, needsUpdateAlerts, nil
 }
 
 // RetryStage notifies via passed integration with exponential backoff until it
@@ -818,15 +679,15 @@ func (r RetryStage) exec(ctx context.Context, l log.Logger, alerts ...*types.Ale
 // SetNotifiesStage sets the notification information about passed alerts. The
 // passed alerts should have already been sent to the receivers.
 type SetNotifiesStage struct {
-	nflog NotificationLog
-	recv  *nflogpb.Receiver
+	rdb  redis.Cmdable
+	recv *nflogpb.Receiver
 }
 
 // NewSetNotifiesStage returns a new instance of a SetNotifiesStage.
-func NewSetNotifiesStage(l NotificationLog, recv *nflogpb.Receiver) *SetNotifiesStage {
+func NewSetNotifiesStage(rdb redis.Cmdable, recv *nflogpb.Receiver) *SetNotifiesStage {
 	return &SetNotifiesStage{
-		nflog: l,
-		recv:  recv,
+		rdb:  rdb,
+		recv: recv,
 	}
 }
 
@@ -836,24 +697,15 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	if !ok {
 		return ctx, nil, errors.New("group key missing")
 	}
-
-	firing, ok := FiringAlerts(ctx)
-	if !ok {
-		return ctx, nil, errors.New("firing alerts missing")
-	}
-
 	resolved, ok := ResolvedAlerts(ctx)
 	if !ok {
 		return ctx, nil, errors.New("resolved alerts missing")
 	}
-
-	repeat, ok := RepeatInterval(ctx)
-	if !ok {
-		return ctx, nil, errors.New("repeat interval missing")
+	stateKeys := make([]string, len(resolved))
+	for _, hash := range resolved {
+		stateKeys = append(stateKeys, stateKey(gkey, n.recv, hash))
 	}
-	expiry := 2 * repeat
-
-	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry)
+	return ctx, alerts, n.rdb.Del(ctx, stateKeys...).Err()
 }
 
 type timeStage struct {
@@ -943,4 +795,53 @@ func inTimeIntervals(now time.Time, intervals map[string][]timeinterval.TimeInte
 		}
 	}
 	return false, nil
+}
+
+type AlertLabels model.LabelSet
+
+// StringAndHash returns a the json representation of the labels as tuples
+// sorted by key. It also returns the a hash of that representation.
+func (al *AlertLabels) hashAlert() (string, string, error) {
+	tl := labelsToTupleLabels(*al)
+
+	b, err := json.Marshal(tl)
+	if err != nil {
+		return "", "", fmt.Errorf("could not generate key for alert instance due to failure to encode labels: %w", err)
+	}
+
+	h := sha1.New()
+	if _, err := h.Write(b); err != nil {
+		return "", "", err
+	}
+
+	return string(b), fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// The following is based on SDK code, copied for now
+
+// tupleLables is an alternative representation of Labels (map[string]string) that can be sorted
+// and then marshalled into a consistent string that can be used a map key. All tupleLabel objects
+// in tupleLabels should have unique first elements (keys).
+type tupleLabels []tupleLabel
+
+// tupleLabel is an element of tupleLabels and should be in the form of [2]{"key", "value"}.
+type tupleLabel [2]string
+
+// Sort tupleLabels by each elements first property (key).
+func (t *tupleLabels) sortByKey() {
+	if t == nil {
+		return
+	}
+	sort.Slice((*t)[:], func(i, j int) bool {
+		return (*t)[i][0] < (*t)[j][0]
+	})
+}
+
+func labelsToTupleLabels(l AlertLabels) tupleLabels {
+	t := make(tupleLabels, 0, len(l))
+	for k, v := range l {
+		t = append(t, tupleLabel{string(k), string(v)})
+	}
+	t.sortByKey()
+	return t
 }
