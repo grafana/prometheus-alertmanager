@@ -303,8 +303,8 @@ func newMetrics(r prometheus.Registerer, s *Silences) *metrics {
 // Options exposes configuration options for creating a new Silences object.
 // Its zero value is a safe default.
 type Options struct {
-	orgId int64
-	rdb   redis.Cmdable
+	OrgId int64
+	Rdb   redis.Cmdable
 	// A logger used by background processing.
 	Logger  log.Logger
 	Metrics prometheus.Registerer
@@ -317,8 +317,8 @@ func New(o Options) (*Silences, error) {
 		mc:     matcherCache{},
 		logger: log.NewNopLogger(),
 		st:     state{},
-		rdb:    o.rdb,
-		orgId:  o.orgId,
+		rdb:    o.Rdb,
+		orgId:  o.OrgId,
 	}
 	s.metrics = newMetrics(o.Metrics, s)
 
