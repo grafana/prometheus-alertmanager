@@ -16,11 +16,9 @@
 package silence
 
 import (
-	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
-	"io"
-	"math/rand"
-	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -31,15 +29,17 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	uuid "github.com/gofrs/uuid"
-	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/prometheus/alertmanager/pkg/labels"
 	pb "github.com/prometheus/alertmanager/silence/silencepb"
 	"github.com/prometheus/alertmanager/types"
 )
+
+const orgSilenceIdx = "%d_silence_idx"
 
 // ErrNotFound is returned if a silence was not found.
 var ErrNotFound = fmt.Errorf("silence not found")
@@ -110,6 +110,7 @@ func NewSilencer(s *Silences, m types.Marker, l log.Logger) *Silencer {
 // Mutes implements the Muter interface.
 func (s *Silencer) Mutes(lset model.LabelSet) bool {
 	fp := lset.Fingerprint()
+	// 激活的静默规则ID、静默规则版本
 	activeIDs, pendingIDs, markerVersion, _ := s.marker.Silenced(fp)
 
 	var (
@@ -117,6 +118,7 @@ func (s *Silencer) Mutes(lset model.LabelSet) bool {
 		allSils    []*pb.Silence
 		newVersion = markerVersion
 	)
+	// 检查静默规则有没有变化
 	if markerVersion == s.silences.Version() {
 		totalSilences := len(activeIDs) + len(pendingIDs)
 		// No new silences added, just need to check which of the old
@@ -139,11 +141,9 @@ func (s *Silencer) Mutes(lset model.LabelSet) bool {
 			QState(types.SilenceStateActive, types.SilenceStatePending),
 		)
 	} else {
-		// New silences have been added, do a full query.
 		allSils, newVersion, err = s.silences.Query(
 			QState(types.SilenceStateActive, types.SilenceStatePending),
-			QMatches(lset),
-		)
+			QMatches(lset))
 	}
 	if err != nil {
 		level.Error(s.logger).Log("msg", "Querying silences failed, alerts might not get silenced correctly", "err", err)
@@ -158,7 +158,7 @@ func (s *Silencer) Mutes(lset model.LabelSet) bool {
 	// result. So let's do it in any case. Note that we cannot reuse the
 	// current ID slices for concurrency reasons.
 	activeIDs, pendingIDs = nil, nil
-	now := s.silences.nowUTC()
+	now := s.silences.now()
 	for _, sil := range allSils {
 		switch getState(sil, now) {
 		case types.SilenceStatePending:
@@ -186,17 +186,16 @@ func (s *Silencer) Mutes(lset model.LabelSet) bool {
 
 // Silences holds a silence state that can be modified, queried, and snapshot.
 type Silences struct {
+	orgId int64
+	rdb   redis.Cmdable
 	clock clock.Clock
 
-	logger    log.Logger
-	metrics   *metrics
-	retention time.Duration
-
-	mtx       sync.RWMutex
-	st        state
-	version   int // Increments whenever silences are added.
-	broadcast func([]byte)
-	mc        matcherCache
+	logger  log.Logger
+	metrics *metrics
+	mtx     sync.RWMutex
+	version int // Increments whenever silences are added.
+	mc      matcherCache
+	st      state
 }
 
 // MaintenanceFunc represents the function to run as part of the periodic maintenance for silences.
@@ -304,166 +303,33 @@ func newMetrics(r prometheus.Registerer, s *Silences) *metrics {
 // Options exposes configuration options for creating a new Silences object.
 // Its zero value is a safe default.
 type Options struct {
-	// A snapshot file or reader from which the initial state is loaded.
-	// None or only one of them must be set.
-	SnapshotFile   string
-	SnapshotReader io.Reader
-
-	// Retention time for newly created Silences. Silences may be
-	// garbage collected after the given duration after they ended.
-	Retention time.Duration
-
+	orgId int64
+	rdb   redis.Cmdable
 	// A logger used by background processing.
 	Logger  log.Logger
 	Metrics prometheus.Registerer
 }
 
-func (o *Options) validate() error {
-	if o.SnapshotFile != "" && o.SnapshotReader != nil {
-		return fmt.Errorf("only one of SnapshotFile and SnapshotReader must be set")
-	}
-	return nil
-}
-
 // New returns a new Silences object with the given configuration.
 func New(o Options) (*Silences, error) {
-	if err := o.validate(); err != nil {
-		return nil, err
-	}
 	s := &Silences{
-		clock:     clock.New(),
-		mc:        matcherCache{},
-		logger:    log.NewNopLogger(),
-		retention: o.Retention,
-		broadcast: func([]byte) {},
-		st:        state{},
+		clock:  clock.New(),
+		mc:     matcherCache{},
+		logger: log.NewNopLogger(),
+		st:     state{},
+		rdb:    o.rdb,
+		orgId:  o.orgId,
 	}
 	s.metrics = newMetrics(o.Metrics, s)
 
 	if o.Logger != nil {
 		s.logger = o.Logger
 	}
-
-	if o.SnapshotFile != "" {
-		if r, err := os.Open(o.SnapshotFile); err != nil {
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
-			level.Debug(s.logger).Log("msg", "silences snapshot file doesn't exist", "err", err)
-		} else {
-			o.SnapshotReader = r
-			defer r.Close()
-		}
-	}
-
-	if o.SnapshotReader != nil {
-		if err := s.loadSnapshot(o.SnapshotReader); err != nil {
-			return s, err
-		}
-	}
 	return s, nil
 }
 
-func (s *Silences) nowUTC() time.Time {
-	return s.clock.Now().UTC()
-}
-
-// Maintenance garbage collects the silence state at the given interval. If the snapshot
-// file is set, a snapshot is written to it afterwards.
-// Terminates on receiving from stopc.
-// If not nil, the last argument is an override for what to do as part of the maintenance - for advanced usage.
-func (s *Silences) Maintenance(interval time.Duration, snapf string, stopc <-chan struct{}, override MaintenanceFunc) {
-	if interval == 0 || stopc == nil {
-		level.Error(s.logger).Log("msg", "interval or stop signal are missing - not running maintenance")
-		return
-	}
-	t := s.clock.Ticker(interval)
-	defer t.Stop()
-
-	var doMaintenance MaintenanceFunc
-	doMaintenance = func() (int64, error) {
-		var size int64
-
-		if _, err := s.GC(); err != nil {
-			return size, err
-		}
-		if snapf == "" {
-			return size, nil
-		}
-		f, err := openReplace(snapf)
-		if err != nil {
-			return size, err
-		}
-		if size, err = s.Snapshot(f); err != nil {
-			f.Close()
-			return size, err
-		}
-		return size, f.Close()
-	}
-
-	if override != nil {
-		doMaintenance = override
-	}
-
-	runMaintenance := func(do MaintenanceFunc) error {
-		s.metrics.maintenanceTotal.Inc()
-		level.Debug(s.logger).Log("msg", "Running maintenance")
-		start := s.nowUTC()
-		size, err := do()
-		s.metrics.snapshotSize.Set(float64(size))
-		if err != nil {
-			s.metrics.maintenanceErrorsTotal.Inc()
-			return err
-		}
-		level.Debug(s.logger).Log("msg", "Maintenance done", "duration", s.clock.Since(start), "size", size)
-		return nil
-	}
-
-Loop:
-	for {
-		select {
-		case <-stopc:
-			break Loop
-		case <-t.C:
-			if err := runMaintenance(doMaintenance); err != nil {
-				level.Info(s.logger).Log("msg", "Running maintenance failed", "err", err)
-			}
-		}
-	}
-
-	// No need for final maintenance if we don't want to snapshot.
-	if snapf == "" {
-		return
-	}
-	if err := runMaintenance(doMaintenance); err != nil {
-		level.Info(s.logger).Log("msg", "Creating shutdown snapshot failed", "err", err)
-	}
-}
-
-// GC runs a garbage collection that removes silences that have ended longer
-// than the configured retention time ago.
-func (s *Silences) GC() (int, error) {
-	start := time.Now()
-	defer func() { s.metrics.gcDuration.Observe(time.Since(start).Seconds()) }()
-
-	now := s.nowUTC()
-	var n int
-
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	for id, sil := range s.st {
-		if sil.ExpiresAt.IsZero() {
-			return n, errors.New("unexpected zero expiration timestamp")
-		}
-		if !sil.ExpiresAt.After(now) {
-			delete(s.st, id)
-			delete(s.mc, sil.Silence)
-			n++
-		}
-	}
-
-	return n, nil
+func (s *Silences) now() time.Time {
+	return s.clock.Now()
 }
 
 // ValidateMatcher runs validation on the matcher name, type, and pattern.
@@ -530,65 +396,49 @@ func validateSilence(s *pb.Silence) error {
 	return nil
 }
 
-// cloneSilence returns a shallow copy of a silence.
-func cloneSilence(sil *pb.Silence) *pb.Silence {
-	s := *sil
-	return &s
-}
-
-func (s *Silences) getSilence(id string) (*pb.Silence, bool) {
-	msil, ok := s.st[id]
-	if !ok {
-		return nil, false
+func (s *Silences) getSilence(ctx context.Context, id string) (*pb.Silence, bool) {
+	silJson, err := s.rdb.HGet(ctx, s.orgSilenceIdx(), id).Result()
+	if err != nil {
 	}
-	return msil.Silence, true
+	sli, err := unmarshalSilence(silJson)
+	if err != nil {
+	}
+	return sli, true
 }
 
-func (s *Silences) setSilence(sil *pb.Silence, now time.Time) error {
+func (s *Silences) setSilence(ctx context.Context, sil *pb.Silence, now time.Time) error {
 	sil.UpdatedAt = now
 
 	if err := validateSilence(sil); err != nil {
 		return errors.Wrap(err, "silence invalid")
 	}
-
-	msil := &pb.MeshSilence{
-		Silence:   sil,
-		ExpiresAt: sil.EndsAt.Add(s.retention),
-	}
-	b, err := marshalMeshSilence(msil)
+	silJson, err := marshalSilence(sil)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "marshal silence failed")
 	}
-
-	if s.st.merge(msil, now) {
-		s.version++
+	err = s.rdb.HSet(ctx, s.orgSilenceIdx(), sil.Id, silJson).Err()
+	if err != nil {
+		return errors.Wrap(err, "silence set redis failed")
 	}
-	s.broadcast(b)
-
+	s.version++
 	return nil
 }
 
 // Set the specified silence. If a silence with the ID already exists and the modification
 // modifies history, the old silence gets expired and a new one is created.
-func (s *Silences) Set(sil *pb.Silence) (string, error) {
+func (s *Silences) Set(ctx context.Context, sil *pb.Silence) (string, error) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
-	now := s.nowUTC()
-	prev, ok := s.getSilence(sil.Id)
+	now := s.now()
+	prev, ok := s.getSilence(ctx, sil.Id)
 
 	if sil.Id != "" && !ok {
 		return "", ErrNotFound
 	}
 	if ok {
-		if canUpdate(prev, sil, now) {
-			return sil.Id, s.setSilence(sil, now)
-		}
-		if getState(prev, s.nowUTC()) != types.SilenceStateExpired {
-			// We cannot update the silence, expire the old one.
-			if err := s.expire(prev.Id); err != nil {
-				return "", errors.Wrap(err, "expire previous silence")
-			}
+		if !canUpdate(prev, sil, now) {
+			return sil.Id, nil
 		}
 	}
 	// If we got here it's either a new silence or a replacing one.
@@ -602,7 +452,7 @@ func (s *Silences) Set(sil *pb.Silence) (string, error) {
 		sil.StartsAt = now
 	}
 
-	return sil.Id, s.setSilence(sil, now)
+	return sil.Id, s.setSilence(ctx, sil, now)
 }
 
 // canUpdate returns true if silence a can be updated to b without
@@ -633,35 +483,10 @@ func canUpdate(a, b *pb.Silence, now time.Time) bool {
 }
 
 // Expire the silence with the given ID immediately.
-func (s *Silences) Expire(id string) error {
+func (s *Silences) Expire(id string) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-	return s.expire(id)
-}
-
-// Expire the silence with the given ID immediately.
-// It is idempotent, nil is returned if the silence already expired before it is GC'd.
-// If the silence is not found an error is returned.
-func (s *Silences) expire(id string) error {
-	sil, ok := s.getSilence(id)
-	if !ok {
-		return ErrNotFound
-	}
-	sil = cloneSilence(sil)
-	now := s.nowUTC()
-
-	switch getState(sil, now) {
-	case types.SilenceStateExpired:
-		return nil
-	case types.SilenceStateActive:
-		sil.EndsAt = now
-	case types.SilenceStatePending:
-		// Set both to now to make Silence move to "expired" state
-		sil.StartsAt = now
-		sil.EndsAt = now
-	}
-
-	return s.setSilence(sil, now)
+	delete(s.st, id)
 }
 
 // QueryParam expresses parameters along which silences are queried.
@@ -715,7 +540,6 @@ func QState(states ...types.SilenceState) QueryParam {
 	return func(q *query) error {
 		f := func(sil *pb.Silence, _ *Silences, now time.Time) (bool, error) {
 			s := getState(sil, now)
-
 			for _, ps := range states {
 				if s == ps {
 					return true, nil
@@ -754,7 +578,7 @@ func (s *Silences) Query(params ...QueryParam) ([]*pb.Silence, int, error) {
 			return nil, s.Version(), err
 		}
 	}
-	sils, version, err := s.query(q, s.nowUTC())
+	sils, version, err := s.query(q, s.now())
 	if err != nil {
 		s.metrics.queryErrorsTotal.Inc()
 	}
@@ -782,19 +606,39 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
 	// If we have no ID constraint, all silences are our base set.  This and
 	// the use of post-filter functions is the trivial solution for now.
 	var res []*pb.Silence
-
+	ctx := context.Background()
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
 
 	if q.ids != nil {
 		for _, id := range q.ids {
-			if s, ok := s.st[id]; ok {
-				res = append(res, s.Silence)
+			if sil, ok := s.st[id]; ok {
+				res = append(res, sil)
 			}
 		}
 	} else {
-		for _, sil := range s.st {
-			res = append(res, sil.Silence)
+		expiredUIDs := make([]string, 0)
+		// get silence index from redis
+		allSilJson, err := s.rdb.HGetAll(ctx, s.orgSilenceIdx()).Result()
+		if err != nil {
+		}
+		for uid, silJson := range allSilJson {
+			sil, err := unmarshalSilence(silJson)
+			if err != nil {
+				return nil, s.version, errors.Wrap(err, "unmarshal silence for redis")
+			}
+			if getState(sil, now) == types.SilenceStateExpired {
+				expiredUIDs = append(expiredUIDs, uid)
+				continue
+			}
+			s.st[uid] = sil
+		}
+		// clear expired idx
+		if err = s.rdb.HDel(ctx, s.orgSilenceIdx(), expiredUIDs...).Err(); err != nil {
+			return nil, s.version, errors.Wrap(err, "del org silence idx for redis failed")
+		}
+		for _, uid := range expiredUIDs {
+			delete(s.st, uid)
 		}
 	}
 
@@ -819,172 +663,24 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
 	return resf, s.version, nil
 }
 
-// loadSnapshot loads a snapshot generated by Snapshot() into the state.
-// Any previous state is wiped.
-func (s *Silences) loadSnapshot(r io.Reader) error {
-	st, err := decodeState(r)
-	if err != nil {
-		return err
-	}
-	for _, e := range st {
-		// Comments list was moved to a single comment. Upgrade on loading the snapshot.
-		if len(e.Silence.Comments) > 0 {
-			e.Silence.Comment = e.Silence.Comments[0].Comment
-			e.Silence.CreatedBy = e.Silence.Comments[0].Author
-			e.Silence.Comments = nil
-		}
-		st[e.Silence.Id] = e
-	}
-	s.mtx.Lock()
-	s.st = st
-	s.version++
-	s.mtx.Unlock()
-
-	return nil
+func (s *Silences) orgSilenceIdx() string {
+	return fmt.Sprintf(orgSilenceIdx, s.orgId)
 }
 
-// Snapshot writes the full internal state into the writer and returns the number of bytes
-// written.
-func (s *Silences) Snapshot(w io.Writer) (int64, error) {
-	start := time.Now()
-	defer func() { s.metrics.snapshotDuration.Observe(time.Since(start).Seconds()) }()
-
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
-
-	b, err := s.st.MarshalBinary()
-	if err != nil {
-		return 0, err
-	}
-
-	return io.Copy(w, bytes.NewReader(b))
+// cloneSilence returns a shallow copy of a silence.
+func cloneSilence(sil *pb.Silence) *pb.Silence {
+	s := *sil
+	return &s
 }
 
-// MarshalBinary serializes all silences.
-func (s *Silences) MarshalBinary() ([]byte, error) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	return s.st.MarshalBinary()
+func marshalSilence(e *pb.Silence) ([]byte, error) {
+	return json.Marshal(e)
 }
 
-// Merge merges silence state received from the cluster with the local state.
-func (s *Silences) Merge(b []byte) error {
-	st, err := decodeState(bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	now := s.nowUTC()
-
-	for _, e := range st {
-		if merged := s.st.merge(e, now); merged {
-			s.version++
-		}
-	}
-	return nil
+func unmarshalSilence(silJson string) (*pb.Silence, error) {
+	var s pb.Silence
+	err := json.Unmarshal([]byte(silJson), &s)
+	return &s, err
 }
 
-// SetBroadcast sets the provided function as the one creating data to be
-// broadcast.
-func (s *Silences) SetBroadcast(f func([]byte)) {
-	s.mtx.Lock()
-	s.broadcast = f
-	s.mtx.Unlock()
-}
-
-type state map[string]*pb.MeshSilence
-
-func (s state) merge(e *pb.MeshSilence, now time.Time) bool {
-	id := e.Silence.Id
-	if e.ExpiresAt.Before(now) {
-		return false
-	}
-	// Comments list was moved to a single comment. Apply upgrade
-	// on silences received from peers.
-	if len(e.Silence.Comments) > 0 {
-		e.Silence.Comment = e.Silence.Comments[0].Comment
-		e.Silence.CreatedBy = e.Silence.Comments[0].Author
-		e.Silence.Comments = nil
-	}
-
-	prev, ok := s[id]
-	if !ok || prev.Silence.UpdatedAt.Before(e.Silence.UpdatedAt) {
-		s[id] = e
-		return true
-	}
-	return false
-}
-
-func (s state) MarshalBinary() ([]byte, error) {
-	var buf bytes.Buffer
-
-	for _, e := range s {
-		if _, err := pbutil.WriteDelimited(&buf, e); err != nil {
-			return nil, err
-		}
-	}
-	return buf.Bytes(), nil
-}
-
-func decodeState(r io.Reader) (state, error) {
-	st := state{}
-	for {
-		var s pb.MeshSilence
-		_, err := pbutil.ReadDelimited(r, &s)
-		if err == nil {
-			if s.Silence == nil {
-				return nil, ErrInvalidState
-			}
-			st[s.Silence.Id] = &s
-			continue
-		}
-		if err == io.EOF {
-			break
-		}
-		return nil, err
-	}
-	return st, nil
-}
-
-func marshalMeshSilence(e *pb.MeshSilence) ([]byte, error) {
-	var buf bytes.Buffer
-	if _, err := pbutil.WriteDelimited(&buf, e); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// replaceFile wraps a file that is moved to another filename on closing.
-type replaceFile struct {
-	*os.File
-	filename string
-}
-
-func (f *replaceFile) Close() error {
-	if err := f.File.Sync(); err != nil {
-		return err
-	}
-	if err := f.File.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.File.Name(), f.filename)
-}
-
-// openReplace opens a new temporary file that is moved to filename on closing.
-func openReplace(filename string) (*replaceFile, error) {
-	tmpFilename := fmt.Sprintf("%s.%x", filename, uint64(rand.Int63()))
-
-	f, err := os.Create(tmpFilename)
-	if err != nil {
-		return nil, err
-	}
-
-	rf := &replaceFile{
-		File:     f,
-		filename: filename,
-	}
-	return rf, nil
-}
+type state map[string]*pb.Silence
