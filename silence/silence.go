@@ -40,6 +40,7 @@ import (
 )
 
 const orgSilenceIdx = "%d_silence_idx"
+const orgSilenceVersion = "%d_silence_version"
 
 // ErrNotFound is returned if a silence was not found.
 var ErrNotFound = fmt.Errorf("silence not found")
@@ -193,7 +194,6 @@ type Silences struct {
 	logger  log.Logger
 	metrics *metrics
 	mtx     sync.RWMutex
-	version int // Increments whenever silences are added.
 	mc      matcherCache
 	st      state
 }
@@ -420,7 +420,10 @@ func (s *Silences) setSilence(ctx context.Context, sil *pb.Silence, now time.Tim
 	if err != nil {
 		return errors.Wrap(err, "silence set redis failed")
 	}
-	s.version++
+	err = s.rdb.Incr(context.Background(), s.versionIdx()).Err()
+	if err != nil {
+		return errors.Wrap(err, "set silence version redis failed")
+	}
 	return nil
 }
 
@@ -437,8 +440,8 @@ func (s *Silences) Set(ctx context.Context, sil *pb.Silence) (string, error) {
 		return "", ErrNotFound
 	}
 	if ok {
-		if !canUpdate(prev, sil, now) {
-			return sil.Id, nil
+		if canUpdate(prev, sil, now) {
+			return sil.Id, s.setSilence(ctx, sil, now)
 		}
 	}
 	// If we got here it's either a new silence or a replacing one.
@@ -459,21 +462,14 @@ func (s *Silences) Set(ctx context.Context, sil *pb.Silence) (string, error) {
 // affecting the historic view of silencing.
 func canUpdate(a, b *pb.Silence, now time.Time) bool {
 	if !reflect.DeepEqual(a.Matchers, b.Matchers) {
-		return false
+		return true
 	}
 	// Allowed timestamp modifications depend on the current time.
 	switch st := getState(a, now); st {
 	case types.SilenceStateActive:
-		if b.StartsAt.Unix() != a.StartsAt.Unix() {
-			return false
-		}
-		if b.EndsAt.Before(now) {
-			return false
-		}
+		return true
 	case types.SilenceStatePending:
-		if b.StartsAt.Before(now) {
-			return false
-		}
+		return true
 	case types.SilenceStateExpired:
 		return false
 	default:
@@ -486,7 +482,22 @@ func canUpdate(a, b *pb.Silence, now time.Time) bool {
 func (s *Silences) Expire(id string) {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-	delete(s.st, id)
+}
+
+// Expire the silence with the given ID immediately.
+// It is idempotent, nil is returned if the silence already expired before it is GC'd.
+// If the silence is not found an error is returned.
+func (s *Silences) expire(ctx context.Context, ids []string) error {
+	if err := s.rdb.HDel(ctx, s.orgSilenceIdx(), ids...).Err(); err != nil {
+		return errors.Wrap(err, "del org silence idx for redis failed")
+	}
+	for _, id := range ids {
+		if sli, ok := s.st[id]; ok {
+			delete(s.mc, sli)
+			delete(s.st, id)
+		}
+	}
+	return nil
 }
 
 // QueryParam expresses parameters along which silences are queried.
@@ -567,7 +578,7 @@ func (s *Silences) QueryOne(params ...QueryParam) (*pb.Silence, error) {
 
 // Query for silences based on the given query parameters. It returns the
 // resulting silences and the state version the result is based on.
-func (s *Silences) Query(params ...QueryParam) ([]*pb.Silence, int, error) {
+func (s *Silences) Query(params ...QueryParam) ([]*pb.Silence, int64, error) {
 	s.metrics.queriesTotal.Inc()
 	defer prometheus.NewTimer(s.metrics.queryDuration).ObserveDuration()
 
@@ -585,13 +596,6 @@ func (s *Silences) Query(params ...QueryParam) ([]*pb.Silence, int, error) {
 	return sils, version, err
 }
 
-// Version of the silence state.
-func (s *Silences) Version() int {
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
-	return s.version
-}
-
 // CountState counts silences by state.
 func (s *Silences) CountState(states ...types.SilenceState) (int, error) {
 	// This could probably be optimized.
@@ -602,14 +606,14 @@ func (s *Silences) CountState(states ...types.SilenceState) (int, error) {
 	return len(sils), nil
 }
 
-func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
+func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int64, error) {
 	// If we have no ID constraint, all silences are our base set.  This and
 	// the use of post-filter functions is the trivial solution for now.
 	var res []*pb.Silence
 	ctx := context.Background()
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-
+	version := s.Version()
 	if q.ids != nil {
 		for _, id := range q.ids {
 			if sil, ok := s.st[id]; ok {
@@ -618,14 +622,13 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
 		}
 	} else {
 		expiredUIDs := make([]string, 0)
-		// get silence index from redis
 		allSilJson, err := s.rdb.HGetAll(ctx, s.orgSilenceIdx()).Result()
 		if err != nil {
 		}
 		for uid, silJson := range allSilJson {
 			sil, err := unmarshalSilence(silJson)
 			if err != nil {
-				return nil, s.version, errors.Wrap(err, "unmarshal silence for redis")
+				return nil, version, errors.Wrap(err, "unmarshal silence for redis")
 			}
 			if getState(sil, now) == types.SilenceStateExpired {
 				expiredUIDs = append(expiredUIDs, uid)
@@ -633,12 +636,9 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
 			}
 			s.st[uid] = sil
 		}
-		// clear expired idx
-		if err = s.rdb.HDel(ctx, s.orgSilenceIdx(), expiredUIDs...).Err(); err != nil {
-			return nil, s.version, errors.Wrap(err, "del org silence idx for redis failed")
-		}
-		for _, uid := range expiredUIDs {
-			delete(s.st, uid)
+		// GC expired idx
+		if err = s.expire(ctx, expiredUIDs); err != nil {
+			return nil, version, errors.Wrap(err, "del org silence idx for redis failed")
 		}
 	}
 
@@ -648,7 +648,7 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
 		for _, f := range q.filters {
 			ok, err := f(sil, s, now)
 			if err != nil {
-				return nil, s.version, err
+				return nil, version, err
 			}
 			if !ok {
 				remove = true
@@ -660,11 +660,23 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int, error) {
 		}
 	}
 
-	return resf, s.version, nil
+	return resf, version, nil
 }
 
 func (s *Silences) orgSilenceIdx() string {
 	return fmt.Sprintf(orgSilenceIdx, s.orgId)
+}
+
+func (s *Silences) versionIdx() string {
+	return fmt.Sprintf(orgSilenceVersion, s.orgId)
+}
+
+func (s *Silences) Version() int64 {
+	version, err := s.rdb.Get(context.Background(), s.versionIdx()).Int64()
+	if err != nil {
+		level.Error(s.logger).Log("msg", "Get silences version failed", "org", s.versionIdx(), "err", err)
+	}
+	return version
 }
 
 // cloneSilence returns a shallow copy of a silence.
