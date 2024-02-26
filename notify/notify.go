@@ -549,13 +549,14 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 			if needsUpdate {
 				firing = append(firing, hash)
 				level.Info(l).Log("msg", "Set stateKey to redis success", "stateKey", sKey)
+				err = n.rdb.SAdd(ctx, a.RuleUID, sKey).Err()
+				if err != nil {
+					level.Error(l).Log("msg", "Set ruleUID idx to redis failed", "UID", a.RuleUID, "stateKey", sKey, "err", err)
+					continue
+				}
 				needsUpdateAlerts = append(needsUpdateAlerts, a)
 			}
-			err = n.rdb.HSet(ctx, a.RuleUID, sKey).Err()
-			if err != nil {
-				level.Error(l).Log("msg", "Set ruleUID idx to redis failed", "UID", a.RuleUID, "stateKey", sKey, "err", err)
-				continue
-			}
+
 		}
 	}
 	ctx = WithFiringAlerts(ctx, firing)
