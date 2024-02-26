@@ -636,7 +636,7 @@ func (api *API) deleteSilenceHandler(params silence_ops.DeleteSilenceParams) mid
 	logger := api.requestLogger(params.HTTPRequest)
 
 	sid := params.SilenceID.String()
-	if err := api.silences.Expire(sid); err != nil {
+	if err := api.silences.Expire(params.HTTPRequest.Context(), sid); err != nil {
 		level.Error(logger).Log("msg", "Failed to expire silence", "err", err)
 		if err == silence.ErrNotFound {
 			return silence_ops.NewDeleteSilenceNotFound()
@@ -669,7 +669,7 @@ func (api *API) postSilencesHandler(params silence_ops.PostSilencesParams) middl
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(msg)
 	}
 
-	sid, err := api.silences.Set(sil)
+	sid, err := api.silences.Set(params.HTTPRequest.Context(), sil)
 	if err != nil {
 		level.Error(logger).Log("msg", "Failed to create silence", "err", err)
 		if err == silence.ErrNotFound {

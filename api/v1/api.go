@@ -497,7 +497,7 @@ func (api *API) setSilence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sid, err := api.silences.Set(psil)
+	sid, err := api.silences.Set(r.Context(), psil)
 	if err != nil {
 		api.respondError(w, apiError{
 			typ: errorBadData,
@@ -536,7 +536,7 @@ func (api *API) getSilence(w http.ResponseWriter, r *http.Request) {
 func (api *API) delSilence(w http.ResponseWriter, r *http.Request) {
 	sid := route.Param(r.Context(), "sid")
 
-	if err := api.silences.Expire(sid); err != nil {
+	if err := api.silences.Expire(r.Context(), sid); err != nil {
 		api.respondError(w, apiError{
 			typ: errorBadData,
 			err: err,

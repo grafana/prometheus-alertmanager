@@ -479,9 +479,10 @@ func canUpdate(a, b *pb.Silence, now time.Time) bool {
 }
 
 // Expire the silence with the given ID immediately.
-func (s *Silences) Expire(id string) {
+func (s *Silences) Expire(ctx context.Context, id string) error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
+	return s.expire(ctx, []string{id})
 }
 
 // Expire the silence with the given ID immediately.

@@ -15,6 +15,7 @@ package v2
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,7 +48,6 @@ import (
 func TestGetStatusHandlerWithNilPeer(t *testing.T) {
 	api := API{
 		uptime:             time.Now(),
-		peer:               nil,
 		alertmanagerConfig: &config.Config{},
 	}
 
@@ -148,6 +148,7 @@ func TestGetSilencesHandler(t *testing.T) {
 }
 
 func TestDeleteSilenceHandler(t *testing.T) {
+	ctx := context.Background()
 	now := time.Now()
 	silences := newSilences(t)
 
@@ -159,7 +160,7 @@ func TestDeleteSilenceHandler(t *testing.T) {
 		EndsAt:    now.Add(time.Hour),
 		UpdatedAt: now,
 	}
-	unexpiredSid, err := silences.Set(unexpiredSil)
+	unexpiredSid, err := silences.Set(ctx, unexpiredSil)
 	require.NoError(t, err)
 
 	expiredSil := &silencepb.Silence{
@@ -168,9 +169,9 @@ func TestDeleteSilenceHandler(t *testing.T) {
 		EndsAt:    now.Add(time.Hour),
 		UpdatedAt: now,
 	}
-	expiredSid, err := silences.Set(expiredSil)
+	expiredSid, err := silences.Set(ctx, expiredSil)
 	require.NoError(t, err)
-	require.NoError(t, silences.Expire(expiredSid))
+	require.NoError(t, silences.Expire(ctx, expiredSid))
 
 	for i, tc := range []struct {
 		sid          string
@@ -212,6 +213,7 @@ func TestDeleteSilenceHandler(t *testing.T) {
 }
 
 func TestPostSilencesHandler(t *testing.T) {
+	ctx := context.Background()
 	now := time.Now()
 	silences := newSilences(t)
 
@@ -223,7 +225,7 @@ func TestPostSilencesHandler(t *testing.T) {
 		EndsAt:    now.Add(time.Hour),
 		UpdatedAt: now,
 	}
-	unexpiredSid, err := silences.Set(unexpiredSil)
+	unexpiredSid, err := silences.Set(ctx, unexpiredSil)
 	require.NoError(t, err)
 
 	expiredSil := &silencepb.Silence{
@@ -232,9 +234,9 @@ func TestPostSilencesHandler(t *testing.T) {
 		EndsAt:    now.Add(time.Hour),
 		UpdatedAt: now,
 	}
-	expiredSid, err := silences.Set(expiredSil)
+	expiredSid, err := silences.Set(ctx, expiredSil)
 	require.NoError(t, err)
-	require.NoError(t, silences.Expire(expiredSid))
+	require.NoError(t, silences.Expire(ctx, expiredSid))
 
 	t.Run("Silences CRUD", func(t *testing.T) {
 		for i, tc := range []struct {
