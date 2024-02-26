@@ -133,6 +133,7 @@ const (
 	keyNow
 	keyMuteTimeIntervals
 	keyActiveTimeIntervals
+	keyRuleUID
 )
 
 // WithReceiverName populates a context with a receiver name.
@@ -550,6 +551,11 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 				level.Info(l).Log("msg", "Set stateKey to redis success", "stateKey", sKey)
 				needsUpdateAlerts = append(needsUpdateAlerts, a)
 			}
+			err = n.rdb.HSet(ctx, a.RuleUID, sKey).Err()
+			if err != nil {
+				level.Error(l).Log("msg", "Set ruleUID idx to redis failed", "UID", a.RuleUID, "stateKey", sKey, "err", err)
+				continue
+			}
 		}
 	}
 	ctx = WithFiringAlerts(ctx, firing)
@@ -711,11 +717,14 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	for _, hash := range resolved {
 		stateKeys = append(stateKeys, stateKey(gkey, n.recv, hash))
 	}
-	err := n.rdb.Del(ctx, stateKeys...).Err()
-	if err == nil {
-		level.Info(l).Log("msg", "Del stateKeys to redis success", "stateKeys", strings.Join(stateKeys, ","))
+	var err error
+	if len(stateKeys) != 0 {
+		err = n.rdb.Del(ctx, stateKeys...).Err()
+		if err == nil {
+			level.Info(l).Log("msg", "Del stateKeys to redis success", "stateKeys", strings.Join(stateKeys, ","))
+		}
 	}
-	return ctx, alerts, n.rdb.Del(ctx, stateKeys...).Err()
+	return ctx, alerts, err
 }
 
 type timeStage struct {

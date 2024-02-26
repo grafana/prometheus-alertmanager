@@ -280,7 +280,7 @@ definitions:
         type: string
       status:
         type: string
-        enum: ["ready", "settling", "disabled"]
+        enum: [ "ready", "settling", "disabled" ]
       peers:
         type: array
         items:
@@ -375,7 +375,7 @@ definitions:
     properties:
       state:
         type: string
-        enum: ["expired", "active", "pending"]
+        enum: [ "expired", "active", "pending" ]
     required:
       - state
   gettableSilences:
@@ -463,6 +463,8 @@ definitions:
           endsAt:
             type: string
             format: date-time
+          ruleUID:
+            type: string
           annotations:
             $ref: '#/definitions/labelSet'
       - $ref: '#/definitions/alert'
@@ -490,7 +492,7 @@ definitions:
     properties:
       state:
         type: string
-        enum: ['unprocessed', 'active', 'suppressed']
+        enum: [ 'unprocessed', 'active', 'suppressed' ]
       silencedBy:
         type: array
         items:

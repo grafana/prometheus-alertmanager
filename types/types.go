@@ -296,7 +296,7 @@ func (e *MultiError) Error() string {
 // embedded alert has to be sanitized beforehand.
 type Alert struct {
 	model.Alert
-
+	RuleUID string
 	// The authoritative timestamp.
 	UpdatedAt time.Time
 	Timeout   bool
