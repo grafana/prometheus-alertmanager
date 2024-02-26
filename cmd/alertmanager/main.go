@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -164,11 +163,10 @@ func run() int {
 	}
 
 	var (
-		configFile          = kingpin.Flag("config.file", "Alertmanager configuration file name.").Default("alertmanager.yml").String()
-		dataDir             = kingpin.Flag("storage.path", "Base path for data storage.").Default("data/").String()
-		retention           = kingpin.Flag("data.retention", "How long to keep data for.").Default("120h").Duration()
-		maintenanceInterval = kingpin.Flag("data.maintenance-interval", "Interval between garbage collection and snapshotting to disk of the silences and the notification logs.").Default("15m").Duration()
-		alertGCInterval     = kingpin.Flag("alerts.gc-interval", "Interval between alert GC.").Default("30m").Duration()
+		configFile      = kingpin.Flag("config.file", "Alertmanager configuration file name.").Default("alertmanager.yml").String()
+		dataDir         = kingpin.Flag("storage.path", "Base path for data storage.").Default("data/").String()
+		retention       = kingpin.Flag("data.retention", "How long to keep data for.").Default("120h").Duration()
+		alertGCInterval = kingpin.Flag("alerts.gc-interval", "Interval between alert GC.").Default("30m").Duration()
 
 		webConfig      = webflag.AddFlags(kingpin.CommandLine, ":9093")
 		externalURL    = kingpin.Flag("web.external-url", "The URL under which Alertmanager is externally reachable (for example, if Alertmanager is served via a reverse proxy). Used for generating relative and absolute links back to Alertmanager itself. If the URL has a path portion, it will be used to prefix all HTTP endpoints served by Alertmanager. If omitted, relevant URL components will be derived automatically.").String()
@@ -201,10 +199,8 @@ func run() int {
 	marker := types.NewMarker(prometheus.DefaultRegisterer)
 
 	silenceOpts := silence.Options{
-		SnapshotFile: filepath.Join(*dataDir, "silences"),
-		Retention:    *retention,
-		Logger:       log.With(logger, "component", "silences"),
-		Metrics:      prometheus.DefaultRegisterer,
+		Logger:  log.With(logger, "component", "silences"),
+		Metrics: prometheus.DefaultRegisterer,
 	}
 
 	silences, err := silence.New(silenceOpts)
@@ -212,12 +208,6 @@ func run() int {
 		level.Error(logger).Log("err", err)
 		return 1
 	}
-	// Start providers before router potentially sends updates.
-	wg.Add(1)
-	go func() {
-		silences.Maintenance(*maintenanceInterval, filepath.Join(*dataDir, "silences"), stopc, nil)
-		wg.Done()
-	}()
 
 	defer func() {
 		close(stopc)
