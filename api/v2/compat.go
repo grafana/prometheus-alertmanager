@@ -27,12 +27,13 @@ import (
 
 // GettableSilenceFromProto converts *silencepb.Silence to open_api_models.GettableSilence.
 func GettableSilenceFromProto(s *silencepb.Silence) (open_api_models.GettableSilence, error) {
-	start := strfmt.DateTime(s.StartsAt)
-	end := strfmt.DateTime(s.EndsAt)
+	start := s.StartsAt.Unix()
+	end := s.EndsAt.Unix()
 	updated := strfmt.DateTime(s.UpdatedAt)
 	state := string(types.CalcSilenceState(s.StartsAt, s.EndsAt))
 	sil := open_api_models.GettableSilence{
 		Silence: open_api_models.Silence{
+			Name:      s.Name,
 			StartsAt:  &start,
 			EndsAt:    &end,
 			Comment:   &s.Comment,
@@ -82,10 +83,11 @@ func GettableSilenceFromProto(s *silencepb.Silence) (open_api_models.GettableSil
 func PostableSilenceToProto(s *open_api_models.PostableSilence) (*silencepb.Silence, error) {
 	sil := &silencepb.Silence{
 		Id:        s.ID,
-		StartsAt:  time.Time(*s.StartsAt),
-		EndsAt:    time.Time(*s.EndsAt),
+		StartsAt:  time.Unix(*s.StartsAt, 0),
+		EndsAt:    time.Unix(*s.EndsAt, 0),
 		Comment:   *s.Comment,
 		CreatedBy: *s.CreatedBy,
+		Name:      s.Name,
 	}
 	for _, m := range s.Matchers {
 		matcher := &silencepb.Matcher{
