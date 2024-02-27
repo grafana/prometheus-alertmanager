@@ -399,9 +399,16 @@ func validateSilence(s *pb.Silence) error {
 func (s *Silences) getSilence(ctx context.Context, id string) (*pb.Silence, bool) {
 	silJson, err := s.rdb.HGet(ctx, s.orgSilenceIdx(), id).Result()
 	if err != nil {
+		level.Error(s.logger).Log("msg", "get silence from redis failed", "uid", id, "err", err)
+		return nil, false
+	}
+	if silJson == "" {
+		return nil, false
 	}
 	sli, err := unmarshalSilence(silJson)
 	if err != nil {
+		level.Error(s.logger).Log("msg", "unmarshal silence from redis failed", "uid", id, "err", err)
+		return nil, false
 	}
 	return sli, true
 }
