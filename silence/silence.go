@@ -625,25 +625,22 @@ func (s *Silences) query(q *query, now time.Time) ([]*pb.Silence, int64, error) 
 			}
 		}
 	} else {
-		expiredUIDs := make([]string, 0)
 		allSilJson, err := s.rdb.HGetAll(ctx, s.orgSilenceIdx()).Result()
 		if err != nil {
+			return nil, version, errors.Wrap(err, "get all silence for redis")
 		}
 		for uid, silJson := range allSilJson {
 			sil, err := unmarshalSilence(silJson)
 			if err != nil {
-				return nil, version, errors.Wrap(err, "unmarshal silence for redis")
-			}
-			if getState(sil, now) == types.SilenceStateExpired {
-				expiredUIDs = append(expiredUIDs, uid)
+				level.Error(s.logger).Log("msg", "unmarshal silence failed", "uid", uid, "err", err)
 				continue
 			}
-			s.st[uid] = sil
+			if getState(sil, now) != types.SilenceStateExpired {
+				s.st[uid] = sil
+				res = append(res, sil)
+			}
 		}
-		// GC expired idx
-		if err = s.expire(ctx, expiredUIDs); err != nil {
-			return nil, version, errors.Wrap(err, "del org silence idx for redis failed")
-		}
+
 	}
 
 	var resf []*pb.Silence
