@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-openapi/strfmt"
 	"github.com/stretchr/testify/require"
 
 	open_api_models "github.com/prometheus/alertmanager/api/v2/models"
@@ -33,8 +32,8 @@ func createSilence(t *testing.T, ID, creator string, start, ends time.Time) (ope
 	matcherName := "a"
 	matcherValue := "b"
 	isRegex := false
-	startsAt := strfmt.DateTime(start)
-	endsAt := strfmt.DateTime(ends)
+	startsAt := start.Unix()
+	endsAt := ends.Unix()
 
 	sil := open_api_models.PostableSilence{
 		ID: ID,
