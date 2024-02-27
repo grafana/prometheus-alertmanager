@@ -48,13 +48,13 @@ var ErrNotFound = fmt.Errorf("silence not found")
 // ErrInvalidState is returned if the state isn't valid.
 var ErrInvalidState = fmt.Errorf("invalid state")
 
-type matcherCache map[*pb.Silence]labels.Matchers
+type matcherCache map[string]labels.Matchers
 
 // Get retrieves the matchers for a given silence. If it is a missed cache
 // access, it compiles and adds the matchers of the requested silence to the
 // cache.
 func (c matcherCache) Get(s *pb.Silence) (labels.Matchers, error) {
-	if m, ok := c[s]; ok {
+	if m, ok := c[s.Id]; ok {
 		return m, nil
 	}
 	return c.add(s)
@@ -87,7 +87,7 @@ func (c matcherCache) add(s *pb.Silence) (labels.Matchers, error) {
 		ms[i] = matcher
 	}
 
-	c[s] = ms
+	c[s.Id] = ms
 	return ms, nil
 }
 
@@ -448,8 +448,11 @@ func (s *Silences) Set(ctx context.Context, sil *pb.Silence) (string, error) {
 	}
 	if ok {
 		if canUpdate(prev, sil, now) {
-			return sil.Id, s.setSilence(ctx, sil, now)
+			if err := s.expire(ctx, []string{sil.Id}); err != nil {
+				return sil.Id, errors.Wrap(err, "expire silence")
+			}
 		}
+		return sil.Id, s.setSilence(ctx, sil, now)
 	}
 	// If we got here it's either a new silence or a replacing one.
 	uid, err := uuid.NewV4()
@@ -471,18 +474,13 @@ func canUpdate(a, b *pb.Silence, now time.Time) bool {
 	if !reflect.DeepEqual(a.Matchers, b.Matchers) {
 		return true
 	}
-	// Allowed timestamp modifications depend on the current time.
-	switch st := getState(a, now); st {
-	case types.SilenceStateActive:
+	if b.StartsAt.Unix() != a.StartsAt.Unix() {
 		return true
-	case types.SilenceStatePending:
-		return true
-	case types.SilenceStateExpired:
-		return false
-	default:
-		panic("unknown silence state")
 	}
-	return true
+	if b.EndsAt.After(now) {
+		return true
+	}
+	return false
 }
 
 // Expire the silence with the given ID immediately.
@@ -500,10 +498,8 @@ func (s *Silences) expire(ctx context.Context, ids []string) error {
 		return errors.Wrap(err, "del org silence idx for redis failed")
 	}
 	for _, id := range ids {
-		if sli, ok := s.st[id]; ok {
-			delete(s.mc, sli)
-			delete(s.st, id)
-		}
+		delete(s.mc, id)
+		delete(s.st, id)
 	}
 	return nil
 }

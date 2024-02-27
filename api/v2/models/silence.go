@@ -29,17 +29,18 @@ type Silence struct {
 
 	// ends at
 	// Required: true
-	// Format: date-time
-	EndsAt *strfmt.DateTime `json:"endsAt"`
+	EndsAt *int64 `json:"endsAt"`
 
 	// matchers
 	// Required: true
 	Matchers Matchers `json:"matchers"`
 
+	// name
+	Name string `json:"name,omitempty"`
+
 	// starts at
 	// Required: true
-	// Format: date-time
-	StartsAt *strfmt.DateTime `json:"startsAt"`
+	StartsAt *int64 `json:"startsAt"`
 }
 
 // Validate validates this silence
@@ -96,10 +97,6 @@ func (m *Silence) validateEndsAt(formats strfmt.Registry) error {
 		return err
 	}
 
-	if err := validate.FormatOf("endsAt", "body", "date-time", m.EndsAt.String(), formats); err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -124,10 +121,6 @@ func (m *Silence) validateMatchers(formats strfmt.Registry) error {
 func (m *Silence) validateStartsAt(formats strfmt.Registry) error {
 
 	if err := validate.Required("startsAt", "body", m.StartsAt); err != nil {
-		return err
-	}
-
-	if err := validate.FormatOf("startsAt", "body", "date-time", m.StartsAt.String(), formats); err != nil {
 		return err
 	}
 

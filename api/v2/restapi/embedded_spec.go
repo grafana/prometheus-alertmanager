@@ -753,15 +753,18 @@ func init() {
           "type": "string"
         },
         "endsAt": {
-          "type": "string",
-          "format": "date-time"
+          "type": "number",
+          "format": "int64"
         },
         "matchers": {
           "$ref": "#/definitions/matchers"
         },
+        "name": {
+          "type": "string"
+        },
         "startsAt": {
-          "type": "string",
-          "format": "date-time"
+          "type": "number",
+          "format": "int64"
         }
       }
     },
@@ -1612,15 +1615,18 @@ func init() {
           "type": "string"
         },
         "endsAt": {
-          "type": "string",
-          "format": "date-time"
+          "type": "number",
+          "format": "int64"
         },
         "matchers": {
           "$ref": "#/definitions/matchers"
         },
+        "name": {
+          "type": "string"
+        },
         "startsAt": {
-          "type": "string",
-          "format": "date-time"
+          "type": "number",
+          "format": "int64"
         }
       }
     },

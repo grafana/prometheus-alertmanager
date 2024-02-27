@@ -332,14 +332,16 @@ definitions:
       matchers:
         $ref: '#/definitions/matchers'
       startsAt:
-        type: string
-        format: date-time
+        type: number
+        format: int64
       endsAt:
-        type: string
-        format: date-time
+        type: number
+        format: int64
       createdBy:
         type: string
       comment:
+        type: string
+      name:
         type: string
     required:
       - matchers
