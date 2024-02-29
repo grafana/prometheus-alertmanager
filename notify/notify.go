@@ -720,9 +720,9 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	}
 	var err error
 	if len(stateKeys) != 0 {
-		err = n.rdb.Del(ctx, stateKeys...).Err()
-		if err == nil {
-			level.Info(l).Log("msg", "Del stateKeys to redis success", "stateKeys", strings.Join(stateKeys, ","))
+		if err = n.rdb.Del(ctx, stateKeys...).Err(); err != nil {
+			level.Error(l).Log("msg", "Del stateKeys to redis success", "stateKeys", strings.Join(stateKeys, ","))
+
 		}
 	}
 	return ctx, alerts, err
