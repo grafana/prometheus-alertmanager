@@ -27,6 +27,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
+	"github.com/prometheus/alertmanager/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/redis/go-redis/v9"
@@ -35,7 +36,6 @@ import (
 	"github.com/prometheus/alertmanager/nflog/nflogpb"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/timeinterval"
-	"github.com/prometheus/alertmanager/types"
 )
 
 // ResolvedSender returns true if resolved notifications should be sent.
@@ -136,6 +136,11 @@ const (
 	keyRuleUID
 )
 
+// WithRuleUID populates a context with a receiver name.
+func WithRuleUID(ctx context.Context, uid string) context.Context {
+	return context.WithValue(ctx, keyRuleUID, uid)
+}
+
 // WithReceiverName populates a context with a receiver name.
 func WithReceiverName(ctx context.Context, rcv string) context.Context {
 	return context.WithValue(ctx, keyReceiverName, rcv)
@@ -184,6 +189,11 @@ func WithActiveTimeIntervals(ctx context.Context, at []string) context.Context {
 // second argument is false.
 func RepeatInterval(ctx context.Context) (time.Duration, bool) {
 	v, ok := ctx.Value(keyRepeatInterval).(time.Duration)
+	return v, ok
+}
+
+func RuleUID(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(keyRuleUID).(string)
 	return v, ok
 }
 
@@ -558,6 +568,8 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 			}
 
 		}
+
+		ctx = WithRuleUID(ctx, a.RuleUID)
 	}
 	ctx = WithFiringAlerts(ctx, firing)
 	ctx = WithResolvedAlerts(ctx, resolved)
@@ -720,9 +732,13 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	}
 	var err error
 	if len(stateKeys) != 0 {
+		if ruleUID, ok := RuleUID(ctx); ok {
+			if err = n.rdb.SRem(ctx, ruleUID, stateKeys).Err(); err != nil {
+				level.Error(l).Log("msg", "Del stateKeys idx to redis failed", "stateKeys", strings.Join(stateKeys, ","))
+			}
+		}
 		if err = n.rdb.Del(ctx, stateKeys...).Err(); err != nil {
-			level.Error(l).Log("msg", "Del stateKeys to redis success", "stateKeys", strings.Join(stateKeys, ","))
-
+			level.Error(l).Log("msg", "Del stateKeys to redis failed", "stateKeys", strings.Join(stateKeys, ","))
 		}
 	}
 	return ctx, alerts, err
