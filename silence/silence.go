@@ -461,10 +461,6 @@ func (s *Silences) Set(ctx context.Context, sil *pb.Silence) (string, error) {
 	}
 	sil.Id = uid.String()
 
-	if sil.StartsAt.Before(now) {
-		sil.StartsAt = now
-	}
-
 	return sil.Id, s.setSilence(ctx, sil, now)
 }
 
