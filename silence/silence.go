@@ -600,6 +600,23 @@ func (s *Silences) Query(params ...QueryParam) ([]*pb.Silence, int64, error) {
 	return sils, version, err
 }
 
+func (s *Silences) QueryAll(ctx context.Context) ([]*pb.Silence, error) {
+	allSilJson, err := s.rdb.HGetAll(ctx, s.orgSilenceIdx()).Result()
+	if err != nil {
+		return nil, errors.Wrap(err, "get all silence for redis")
+	}
+	var res []*pb.Silence
+	for uid, silJson := range allSilJson {
+		sil, err := unmarshalSilence(silJson)
+		if err != nil {
+			level.Error(s.logger).Log("msg", "unmarshal silence failed", "uid", uid, "err", err)
+			continue
+		}
+		res = append(res, sil)
+	}
+	return res, nil
+}
+
 // CountState counts silences by state.
 func (s *Silences) CountState(states ...types.SilenceState) (int, error) {
 	// This could probably be optimized.
