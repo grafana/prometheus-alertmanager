@@ -634,7 +634,7 @@ func TestSetNotifiesStage(t *testing.T) {
 		require.Equal(t, "1", gkey)
 		require.Equal(t, []uint64{0, 1, 2}, firingAlerts)
 		require.Equal(t, []uint64{}, resolvedAlerts)
-		require.Equal(t, 2*time.Hour, expiry)
+		require.Equal(t, time.Hour, expiry)
 		return nil
 	}
 	resctx, res, err = s.Exec(ctx, log.NewNopLogger(), alerts...)
@@ -650,7 +650,7 @@ func TestSetNotifiesStage(t *testing.T) {
 		require.Equal(t, "1", gkey)
 		require.Equal(t, []uint64{}, firingAlerts)
 		require.Equal(t, []uint64{0, 1, 2}, resolvedAlerts)
-		require.Equal(t, 2*time.Hour, expiry)
+		require.Equal(t, time.Hour, expiry)
 		return nil
 	}
 	resctx, res, err = s.Exec(ctx, log.NewNopLogger(), alerts...)
