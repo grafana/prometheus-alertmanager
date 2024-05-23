@@ -44,13 +44,13 @@ import (
 
 // BuildReceiverIntegrations builds a list of integration notifiers off of a
 // receiver config.
-func BuildReceiverIntegrations(nc config.Receiver, tmpl *template.Template, logger *slog.Logger, httpOpts ...commoncfg.HTTPClientOption) ([]*notify.Integration, error) {
+func BuildReceiverIntegrations(nc config.Receiver, tmpl *template.Template, logger *slog.Logger, httpOpts ...commoncfg.HTTPClientOption) ([]notify.Integration, error) {
 	if logger == nil {
 		logger = promslog.NewNopLogger()
 	}
 	var (
 		errs         types.MultiError
-		integrations []*notify.Integration
+		integrations []notify.Integration
 		add          = func(name string, i int, rs notify.ResolvedSender, f func(l *slog.Logger) (notify.Notifier, error)) {
 			n, err := f(logger.With("integration", name))
 			if err != nil {
