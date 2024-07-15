@@ -856,12 +856,7 @@ func (r RetryStage) exec(ctx context.Context, l log.Logger, alerts ...*types.Ale
 					iErr = err
 				}
 			} else {
-				lvl := level.Info(l)
-				if i <= 1 {
-					lvl = level.Debug(log.With(l, "alerts", fmt.Sprintf("%v", alerts)))
-				}
-
-				lvl.Log("msg", "Notify success", "attempts", i, "duration", duration)
+				level.Info(l).Log("msg", "Notify success", "attempts", i, "duration", duration, "alerts", fmt.Sprintf("%v", alerts))
 				return ctx, alerts, nil
 			}
 		case <-ctx.Done():
