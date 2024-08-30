@@ -9,6 +9,8 @@ require (
 	github.com/benbjohnson/clock v1.3.5
 	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/cespare/xxhash/v2 v2.3.0
+	github.com/coder/quartz v0.1.0
+	github.com/emersion/go-smtp v0.21.3
 	github.com/go-kit/log v0.2.1
 	github.com/go-openapi/analysis v0.22.2
 	github.com/go-openapi/errors v0.21.0
@@ -61,6 +63,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect
 	github.com/go-logfmt/logfmt v0.5.1 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
