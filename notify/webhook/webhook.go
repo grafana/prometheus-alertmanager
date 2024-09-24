@@ -24,12 +24,18 @@ import (
 	"strings"
 
 	commoncfg "github.com/prometheus/common/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
+	"github.com/prometheus/alertmanager/tracing"
 	"github.com/prometheus/alertmanager/types"
 )
+
+var tracer = otel.Tracer("github.com/prometheus/alertmanager/notify/webhook")
 
 // Notifier implements a Notifier for generic webhooks.
 type Notifier struct {
@@ -46,6 +52,10 @@ func New(conf *config.WebhookConfig, t *template.Template, l *slog.Logger, httpO
 	if err != nil {
 		return nil, err
 	}
+
+	// instrument for tracing
+	client.Transport = tracing.Transport(client.Transport, "webhook")
+
 	return &Notifier{
 		conf:   conf,
 		tmpl:   t,
@@ -77,6 +87,11 @@ func truncateAlerts(maxAlerts uint64, alerts []*types.Alert) ([]*types.Alert, ui
 
 // Notify implements the Notifier interface.
 func (n *Notifier) Notify(ctx context.Context, alerts ...*types.Alert) (bool, error) {
+	ctx, span := tracer.Start(ctx, "webhook.Notifier.Notify", trace.WithAttributes(
+		attribute.Int("alerts", len(alerts)),
+	))
+	defer span.End()
+
 	alerts, numTruncated := truncateAlerts(n.conf.MaxAlerts, alerts)
 	data := notify.GetTemplateData(ctx, n.tmpl, alerts, n.logger)
 
