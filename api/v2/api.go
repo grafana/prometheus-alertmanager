@@ -103,7 +103,7 @@ func NewAPI(
 		peer:           peer,
 		silences:       silences,
 		logger:         l,
-		m:              metrics.NewAlerts(r),
+		m:              metrics.NewAlerts(r, l),
 		uptime:         time.Now(),
 	}
 
