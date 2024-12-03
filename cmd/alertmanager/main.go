@@ -438,6 +438,8 @@ func run() int {
 			pipelinePeer = peer
 		}
 
+		enricher := enrichment.NewEnricher(conf.Enrichments, logger)
+
 		pipeline := pipelineBuilder.New(
 			receivers,
 			waitFunc,
@@ -446,6 +448,7 @@ func run() int {
 			intervener,
 			notificationLog,
 			pipelinePeer,
+			enricher,
 		)
 
 		configuredReceivers.Set(float64(len(activeReceiversMap)))

@@ -297,6 +297,51 @@ func (ti *TimeInterval) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// Enrichment configures enrichments.
+type Enrichment struct {
+	// Name
+	Name string `yaml:"name" json:"name"`
+
+	// Matchers optionally restricts the enrichments to only run if the given labels exist in CommonLabels.
+	Matchers Matchers `yaml:"matchers,omitempty" json:"matchers,omitempty"`
+
+	// Receivers optionally restricts the enrichment to one or more receiver names.
+	Receivers []string `yaml:"receivers,omitempty" json:"receivers,omitempty"`
+
+	// HTTPConfig configures the HTTP client used for the request.
+	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
+
+	// URL to send POST request to.
+	URL     *SecretURL `yaml:"url" json:"url"`
+	URLFile string     `yaml:"url_file" json:"url_file"`
+
+	// Timeout is the maximum length of time an enrichment can take.
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+}
+
+var (
+	DefaultEnrichment = Enrichment{
+		Timeout: 15 * time.Second,
+	}
+)
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (c *Enrichment) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	*c = DefaultEnrichment
+	type plain WebhookConfig
+	if err := unmarshal((*plain)(c)); err != nil {
+		return err
+	}
+
+	if c.URL == nil && c.URLFile == "" {
+		return fmt.Errorf("one of url or url_file must be configured")
+	}
+	if c.URL != nil && c.URLFile != "" {
+		return fmt.Errorf("at most one of url & url_file must be configured")
+	}
+	return nil
+}
+
 // Config is the top-level configuration for Alertmanager's config files.
 type Config struct {
 	Global       *GlobalConfig `yaml:"global,omitempty" json:"global,omitempty"`
@@ -304,6 +349,10 @@ type Config struct {
 	InhibitRules []InhibitRule `yaml:"inhibit_rules,omitempty" json:"inhibit_rules,omitempty"`
 	Receivers    []Receiver    `yaml:"receivers,omitempty" json:"receivers,omitempty"`
 	Templates    []string      `yaml:"templates" json:"templates"`
+
+	// Experimental.
+	Enrichments []Enrichment `yaml:"enrichments" json:"enrichments"`
+
 	// Deprecated. Remove before v1.0 release.
 	MuteTimeIntervals []MuteTimeInterval `yaml:"mute_time_intervals,omitempty" json:"mute_time_intervals,omitempty"`
 	TimeIntervals     []TimeInterval     `yaml:"time_intervals,omitempty" json:"time_intervals,omitempty"`
@@ -542,6 +591,18 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		}
 
 		names[rcv.Name] = struct{}{}
+	}
+
+	enrichments := make(map[string]struct{})
+
+	for _, enr := range c.Enrichments {
+		if _, ok := enrichments[enr.Name]; ok {
+			return fmt.Errorf("enrichment config name %q is not unique", enr.Name)
+		}
+
+		if enr.HTTPConfig == nil {
+			enr.HTTPConfig = c.Global.HTTPConfig
+		}
 	}
 
 	// The root route must not have any matchers as it is the fallback node

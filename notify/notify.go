@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/alertmanager/inhibit"
 	"github.com/prometheus/alertmanager/nflog"
 	"github.com/prometheus/alertmanager/nflog/nflogpb"
+	"github.com/prometheus/alertmanager/notify/enrichment"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/timeinterval"
 	"github.com/prometheus/alertmanager/types"
@@ -398,6 +399,7 @@ func (pb *PipelineBuilder) New(
 	intervener *timeinterval.Intervener,
 	notificationLog NotificationLog,
 	peer Peer,
+	enricher *enrichment.Enricher,
 ) RoutingStage {
 	rs := make(RoutingStage, len(receivers))
 
@@ -408,7 +410,8 @@ func (pb *PipelineBuilder) New(
 	ss := NewMuteStage(silencer, pb.metrics)
 
 	for name := range receivers {
-		st := createReceiverStage(name, receivers[name], wait, notificationLog, pb.metrics)
+		enrichments := enricher.GetEnrichments(name)
+		st := createReceiverStage(name, receivers[name], wait, notificationLog, pb.metrics, enrichments)
 		rs[name] = MultiStage{ms, is, tas, tms, ss, st}
 	}
 
@@ -424,6 +427,7 @@ func createReceiverStage(
 	wait func() time.Duration,
 	notificationLog NotificationLog,
 	metrics *Metrics,
+	enrichments enrichment.Enrichments,
 ) Stage {
 	var fs FanoutStage
 	for i := range integrations {
@@ -435,6 +439,7 @@ func createReceiverStage(
 		var s MultiStage
 		s = append(s, NewWaitStage(wait))
 		s = append(s, NewDedupStage(integrations[i], notificationLog, recv))
+		s = append(s, NewEnrichmentStage(enrichments))
 		s = append(s, NewRetryStage(integrations[i], name, metrics))
 		s = append(s, NewSetNotifiesStage(notificationLog, recv))
 
@@ -1013,5 +1018,25 @@ func (tas TimeActiveStage) Exec(ctx context.Context, l log.Logger, alerts ...*ty
 		return ctx, nil, nil
 	}
 
+	return ctx, alerts, nil
+}
+
+// EnrichmentStage mutates the alerts by means of external web hooks.
+type EnrichmentStage struct {
+	enrichments []*enrichment.Enrichment
+}
+
+// Exec implements the Stage interface.
+func (es EnrichmentStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	for _, enr := range es.enrichments {
+		if err := enr.Apply(ctx, alerts...); err != nil {
+			level.Error(l).Log("msg", "Enrichment failed", "enrichment", enr.Name, "err", err)
+
+			// Attempt to apply all enrichments, one doesn't need to affect the others.
+		}
+
+	}
+
+	// Ignore errors, enrichment should not cause alerts not to be sent.
 	return ctx, alerts, nil
 }
