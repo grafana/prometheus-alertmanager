@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -91,7 +92,10 @@ func NewEnrichment(conf config.Enrichment) (*Enrichment, error) {
 
 func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts ...*types.Alert) error {
 	// TODO: Template isn't needed by this function but we need to pass something.
-	data := notify.GetTemplateData(ctx, &template.Template{}, alerts, l)
+	t := &template.Template{
+		ExternalURL: &url.URL{},
+	}
+	data := notify.GetTemplateData(ctx, t, alerts, l)
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(data); err != nil {

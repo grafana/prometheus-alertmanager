@@ -311,7 +311,8 @@ type Enrichment struct {
 
 var (
 	DefaultEnrichment = Enrichment{
-		Timeout: 15 * time.Second,
+		HTTPConfig: &commoncfg.DefaultHTTPClientConfig,
+		Timeout:    15 * time.Second,
 	}
 )
 

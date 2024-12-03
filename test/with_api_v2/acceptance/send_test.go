@@ -464,3 +464,50 @@ receivers:
 
 	t.Log(co.Check())
 }
+
+func TestEnrichment(t *testing.T) {
+	t.Parallel()
+
+	conf := `
+route:
+  receiver: "default"
+  group_by: [alertname]
+  group_wait:      1s
+  group_interval:  2s
+  repeat_interval: 3s
+  enrichments:
+  - url: 'http://localhost:9099'
+
+receivers:
+- name: "default"
+  webhook_configs:
+  - url: 'http://%s'
+  - url: 'http://%s'
+`
+
+	at := NewAcceptanceTest(t, &AcceptanceOpts{
+		Tolerance: 150 * time.Millisecond,
+	})
+
+	co1 := at.Collector("webhook1")
+	wh1 := NewWebhook(t, co1)
+
+	co2 := at.Collector("webhook2")
+	wh2 := NewWebhook(t, co2)
+
+	am := at.AlertmanagerCluster(fmt.Sprintf(conf, wh1.Address(), wh2.Address()), 1)
+
+	am.Push(At(1), Alert("alertname", "test1"))
+
+	co1.Want(Between(2, 2.5), Alert("alertname", "test1").Active(1))
+	co1.Want(Between(6, 6.5), Alert("alertname", "test1").Active(1))
+
+	co2.Want(Between(2, 2.5), Alert("alertname", "test1").Active(1))
+	co2.Want(Between(6, 6.5), Alert("alertname", "test1").Active(1))
+
+	at.Run()
+
+	for _, c := range []*Collector{co1, co2} {
+		t.Log(c.Check())
+	}
+}
