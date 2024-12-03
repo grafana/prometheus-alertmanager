@@ -297,6 +297,35 @@ func (ti *TimeInterval) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// Enrichment configures enrichments.
+type Enrichment struct {
+	// HTTPConfig configures the HTTP client used for the request.
+	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
+
+	// URL to send POST request to.
+	URL SecretURL `yaml:"url" json:"url"`
+
+	// Timeout is the maximum length of time an enrichment can take.
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+}
+
+var (
+	DefaultEnrichment = Enrichment{
+		Timeout: 15 * time.Second,
+	}
+)
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface.
+func (c *Enrichment) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	*c = DefaultEnrichment
+	type plain Enrichment
+	if err := unmarshal((*plain)(c)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Config is the top-level configuration for Alertmanager's config files.
 type Config struct {
 	Global       *GlobalConfig `yaml:"global,omitempty" json:"global,omitempty"`
@@ -304,6 +333,7 @@ type Config struct {
 	InhibitRules []InhibitRule `yaml:"inhibit_rules,omitempty" json:"inhibit_rules,omitempty"`
 	Receivers    []Receiver    `yaml:"receivers,omitempty" json:"receivers,omitempty"`
 	Templates    []string      `yaml:"templates" json:"templates"`
+
 	// Deprecated. Remove before v1.0 release.
 	MuteTimeIntervals []MuteTimeInterval `yaml:"mute_time_intervals,omitempty" json:"mute_time_intervals,omitempty"`
 	TimeIntervals     []TimeInterval     `yaml:"time_intervals,omitempty" json:"time_intervals,omitempty"`
@@ -568,6 +598,13 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 
+	// TODO: Propsgate Globsl.HTTPConfig to enrichments.
+	//for _, enr := range r.Enrichments {
+	//	if enr.HTTPConfig == nil {
+	//		enr.HTTPConfig = c.Global.HTTPConfig
+	//	}
+	//}
+
 	tiNames := make(map[string]struct{})
 
 	// read mute time intervals until deprecated
@@ -794,6 +831,9 @@ type Route struct {
 	GroupWait      *model.Duration `yaml:"group_wait,omitempty" json:"group_wait,omitempty"`
 	GroupInterval  *model.Duration `yaml:"group_interval,omitempty" json:"group_interval,omitempty"`
 	RepeatInterval *model.Duration `yaml:"repeat_interval,omitempty" json:"repeat_interval,omitempty"`
+
+	// Experimental.
+	Enrichments []Enrichment `yaml:"enrichments,omitempty" json:"enrichments,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface for Route.

@@ -132,6 +132,7 @@ const (
 	keyNow
 	keyMuteTimeIntervals
 	keyActiveTimeIntervals
+	keyEnrichments
 )
 
 // WithReceiverName populates a context with a receiver name.
@@ -176,6 +177,15 @@ func WithMuteTimeIntervals(ctx context.Context, mt []string) context.Context {
 
 func WithActiveTimeIntervals(ctx context.Context, at []string) context.Context {
 	return context.WithValue(ctx, keyActiveTimeIntervals, at)
+}
+
+type Enricher interface {
+	Apply(ctx context.Context, l log.Logger, alerts ...*types.Alert)
+}
+
+// WithEnrichments populates a context with enrichments to apply when notifying.
+func WithEnrichments(ctx context.Context, e Enricher) context.Context {
+	return context.WithValue(ctx, keyEnrichments, e)
 }
 
 // RepeatInterval extracts a repeat interval from the context. Iff none exists, the
@@ -238,6 +248,13 @@ func MuteTimeIntervalNames(ctx context.Context) ([]string, bool) {
 // second argument is false.
 func ActiveTimeIntervalNames(ctx context.Context) ([]string, bool) {
 	v, ok := ctx.Value(keyActiveTimeIntervals).([]string)
+	return v, ok
+}
+
+// Enrichments extracts the enricher to apply enrichments with.
+// Iff none exists, the second argument is false.
+func Enrichments(ctx context.Context) (Enricher, bool) {
+	v, ok := ctx.Value(keyEnrichments).(Enricher)
 	return v, ok
 }
 
@@ -435,6 +452,7 @@ func createReceiverStage(
 		var s MultiStage
 		s = append(s, NewWaitStage(wait))
 		s = append(s, NewDedupStage(integrations[i], notificationLog, recv))
+		s = append(s, NewEnrichmentStage())
 		s = append(s, NewRetryStage(integrations[i], name, metrics))
 		s = append(s, NewSetNotifiesStage(notificationLog, recv))
 
@@ -1013,5 +1031,25 @@ func (tas TimeActiveStage) Exec(ctx context.Context, l log.Logger, alerts ...*ty
 		return ctx, nil, nil
 	}
 
+	return ctx, alerts, nil
+}
+
+// EnrichmentStage mutates the alerts by means of external web hooks.
+type EnrichmentStage struct{}
+
+func NewEnrichmentStage() *EnrichmentStage {
+	return &EnrichmentStage{}
+}
+
+// Exec implements the Stage interface.
+func (es EnrichmentStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	enricher, ok := Enrichments(ctx)
+	if !ok {
+		return ctx, alerts, nil
+	}
+
+	enricher.Apply(ctx, l, alerts...)
+
+	// Enrichment errors do not cause alerts to not to be sent.
 	return ctx, alerts, nil
 }

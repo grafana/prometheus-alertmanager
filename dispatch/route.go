@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/prometheus/alertmanager/config"
+	"github.com/prometheus/alertmanager/enrichment"
 	"github.com/prometheus/alertmanager/pkg/labels"
 )
 
@@ -120,6 +121,14 @@ func NewRoute(cr *config.Route, parent *Route) *Route {
 
 	opts.MuteTimeIntervals = cr.MuteTimeIntervals
 	opts.ActiveTimeIntervals = cr.ActiveTimeIntervals
+
+	// Build enrichments.
+	enrichments, err := enrichment.NewEnrichments(cr.Enrichments)
+	if err != nil {
+		// This error must not happen because the config already validates the yaml.
+		panic(err)
+	}
+	opts.Enrichments = enrichments
 
 	route := &Route{
 		parent:    parent,
@@ -236,6 +245,9 @@ type RouteOpts struct {
 
 	// A list of time intervals for which the route is active.
 	ActiveTimeIntervals []string
+
+	// Enrichments to apply to alerts before sending notifications.
+	Enrichments *enrichment.Enrichments
 }
 
 func (ro *RouteOpts) String() string {
