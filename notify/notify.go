@@ -180,7 +180,7 @@ func WithActiveTimeIntervals(ctx context.Context, at []string) context.Context {
 }
 
 type Enricher interface {
-	Apply(ctx context.Context, l log.Logger, alerts ...*types.Alert)
+	Apply(ctx context.Context, l log.Logger, alerts []*types.Alert) []*types.Alert
 }
 
 // WithEnrichments populates a context with enrichments to apply when notifying.
@@ -1045,10 +1045,11 @@ func NewEnrichmentStage() *EnrichmentStage {
 func (es EnrichmentStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
 	enricher, ok := Enrichments(ctx)
 	if !ok {
+		level.Error(l).Log("msg", "Missing enricher")
 		return ctx, alerts, nil
 	}
 
-	enricher.Apply(ctx, l, alerts...)
+	alerts = enricher.Apply(ctx, l, alerts)
 
 	// Enrichment errors do not cause alerts to not to be sent.
 	return ctx, alerts, nil

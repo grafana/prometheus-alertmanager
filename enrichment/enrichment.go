@@ -18,17 +18,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
-	"net/url"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 
 	commoncfg "github.com/prometheus/common/config"
+	"github.com/prometheus/common/model"
 
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
-	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/types"
 )
 
@@ -53,7 +53,7 @@ func NewEnrichments(enrs []config.Enrichment) (*Enrichments, error) {
 	}, nil
 }
 
-func (e *Enrichments) Apply(ctx context.Context, l log.Logger, alerts ...*types.Alert) {
+func (e *Enrichments) Apply(ctx context.Context, l log.Logger, alerts []*types.Alert) []*types.Alert {
 	var (
 		success = 0
 		failed  = 0
@@ -61,16 +61,20 @@ func (e *Enrichments) Apply(ctx context.Context, l log.Logger, alerts ...*types.
 
 	// TODO: These could/should be done async. Need to decide if to allow dependent enrichments.
 	for i, enr := range e.enrichments {
-		if err := enr.Apply(ctx, l, alerts...); err != nil {
+		newAlerts, err := enr.Apply(ctx, l, alerts)
+		if err != nil {
 			// Attempt to apply all enrichments, one doesn't need to affect the others.
 			level.Error(l).Log("msg", "Enrichment failed", "i", i, "err", err)
 			failed++
 		} else {
 			success++
+			alerts = newAlerts
 		}
 	}
 
 	level.Debug(l).Log("msg", "Enrichments applied", "success", success, "failed", failed)
+
+	return alerts
 }
 
 type Enrichment struct {
@@ -90,16 +94,38 @@ func NewEnrichment(conf config.Enrichment) (*Enrichment, error) {
 	}, nil
 }
 
-func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts ...*types.Alert) error {
-	// TODO: Template isn't needed by this function but we need to pass something.
-	t := &template.Template{
-		ExternalURL: &url.URL{},
-	}
-	data := notify.GetTemplateData(ctx, t, alerts, l)
+type Data struct {
+	Receiver string         `json:"receiver"`
+	Status   string         `json:"status"`
+	Alerts   []*types.Alert `json:"alerts"`
 
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(data); err != nil {
-		return err
+	GroupLabels model.LabelSet `json:"groupLabels"`
+}
+
+func GetData(ctx context.Context, l log.Logger, alerts []*types.Alert) *Data {
+	recv, ok := notify.ReceiverName(ctx)
+	if !ok {
+		level.Error(l).Log("msg", "Missing receiver")
+	}
+	groupLabels, ok := notify.GroupLabels(ctx)
+	if !ok {
+		level.Error(l).Log("msg", "Missing group labels")
+	}
+
+	return &Data{
+		Receiver:    recv,
+		Status:      string(types.Alerts(alerts...).Status()),
+		Alerts:      alerts,
+		GroupLabels: groupLabels,
+	}
+}
+
+func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts []*types.Alert) ([]*types.Alert, error) {
+	data := GetData(ctx, l, alerts)
+
+	var reqBuf bytes.Buffer
+	if err := json.NewEncoder(&reqBuf).Encode(data); err != nil {
+		return nil, err
 	}
 
 	url := e.conf.URL.String()
@@ -110,25 +136,29 @@ func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts ...*types.A
 		ctx = postCtx
 	}
 
-	resp, err := notify.PostJSON(ctx, e.client, url, &buf)
+	resp, err := notify.PostJSON(ctx, e.client, url, &reqBuf)
 	if err != nil {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("%w: %w", err, context.Cause(ctx))
 		}
-		return notify.RedactURL(err)
+		return nil, notify.RedactURL(err)
 	}
 	defer resp.Body.Close()
 
-	var result template.Data
-	err = json.NewDecoder(resp.Body).Decode(&result)
+	respBuf, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Data
+	err = json.Unmarshal(respBuf, &result)
+	if err != nil {
+		return nil, err
+	}
 
 	// TODO: Do something with the result.
 	// TODO: Don't log the URL unredacted.
-	level.Info(l).Log("msg", "Enrichment result",
-		"url", url,
-		"groupLabels", result.GroupLabels,
-		"commonLabels", result.CommonLabels,
-		"commonAnnotations", result.CommonLabels)
+	level.Info(l).Log("msg", "Enrichment completed", "url", url, "request", reqBuf.String(), "response", string(respBuf))
 
-	return nil
+	return result.Alerts, nil
 }

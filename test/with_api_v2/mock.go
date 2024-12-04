@@ -26,6 +26,7 @@ import (
 	"github.com/go-openapi/strfmt"
 
 	"github.com/prometheus/alertmanager/api/v2/models"
+	"github.com/prometheus/alertmanager/enrichment"
 	"github.com/prometheus/alertmanager/notify/webhook"
 )
 
@@ -331,5 +332,46 @@ func (ws *MockWebhook) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (ws *MockWebhook) Address() string {
+	return ws.addr
+}
+
+type MockEnrichment struct {
+	addr string
+	fn   func(data *enrichment.Data)
+}
+
+func NewEnrichment(t *testing.T, fn func(data *enrichment.Data)) *MockEnrichment {
+	t.Helper()
+
+	en := &MockEnrichment{
+		fn: fn,
+	}
+
+	server := httptest.NewServer(en)
+	en.addr = server.Listener.Addr().String()
+
+	t.Cleanup(func() {
+		server.Close()
+	})
+
+	return en
+}
+
+func (en *MockEnrichment) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
+
+	var d enrichment.Data
+	if err := json.NewDecoder(req.Body).Decode(&d); err != nil {
+		panic(err)
+	}
+
+	en.fn(&d)
+
+	if err := json.NewEncoder(w).Encode(&d); err != nil {
+		panic(err)
+	}
+}
+
+func (ws *MockEnrichment) Address() string {
 	return ws.addr
 }

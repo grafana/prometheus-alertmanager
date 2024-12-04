@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/alertmanager/enrichment"
 	. "github.com/prometheus/alertmanager/test/with_api_v2"
 )
 
@@ -476,12 +477,11 @@ route:
   group_interval:  2s
   repeat_interval: 3s
   enrichments:
-  - url: 'http://localhost:9099'
+  - url: 'http://%s'
 
 receivers:
 - name: "default"
   webhook_configs:
-  - url: 'http://%s'
   - url: 'http://%s'
 `
 
@@ -489,25 +489,25 @@ receivers:
 		Tolerance: 150 * time.Millisecond,
 	})
 
-	co1 := at.Collector("webhook1")
-	wh1 := NewWebhook(t, co1)
+	co := at.Collector("webhook")
+	wh := NewWebhook(t, co)
 
-	co2 := at.Collector("webhook2")
-	wh2 := NewWebhook(t, co2)
+	enr := NewEnrichment(t, func(data *enrichment.Data) {
+		for i := range data.Alerts {
+			data.Alerts[i].Labels["something"] = "enriched"
+		}
+	})
 
-	am := at.AlertmanagerCluster(fmt.Sprintf(conf, wh1.Address(), wh2.Address()), 1)
+	am := at.AlertmanagerCluster(fmt.Sprintf(conf, enr.Address(), wh.Address()), 1)
 
 	am.Push(At(1), Alert("alertname", "test1"))
 
-	co1.Want(Between(2, 2.5), Alert("alertname", "test1").Active(1))
-	co1.Want(Between(6, 6.5), Alert("alertname", "test1").Active(1))
-
-	co2.Want(Between(2, 2.5), Alert("alertname", "test1").Active(1))
-	co2.Want(Between(6, 6.5), Alert("alertname", "test1").Active(1))
+	co.Want(Between(2, 2.5), Alert("alertname", "test1", "something", "enriched").Active(1))
+	co.Want(Between(6, 6.5), Alert("alertname", "test1", "something", "enriched").Active(1))
 
 	at.Run()
 
-	for _, c := range []*Collector{co1, co2} {
+	for _, c := range []*Collector{co} {
 		t.Log(c.Check())
 	}
 }
