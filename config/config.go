@@ -303,7 +303,8 @@ type Enrichment struct {
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
 	// URL to send POST request to.
-	URL SecretURL `yaml:"url" json:"url"`
+	// TODO: Not using SecretURL so marshaling works.
+	URL URL `yaml:"url" json:"url"`
 
 	// Options is optional arbitrary content to add to the request.
 	Options map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
