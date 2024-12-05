@@ -309,13 +309,13 @@ type Enrichment struct {
 	Options map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
 
 	// Timeout is the maximum length of time an enrichment can take.
-	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+	Timeout model.Duration `yaml:"timeout" json:"timeout"`
 }
 
 var (
 	DefaultEnrichment = Enrichment{
 		HTTPConfig: &commoncfg.DefaultHTTPClientConfig,
-		Timeout:    15 * time.Second,
+		Timeout:    model.Duration(15 * time.Second),
 	}
 )
 

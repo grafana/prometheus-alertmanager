@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -142,7 +143,7 @@ func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts []*types.Al
 	url := e.conf.URL.String()
 
 	if e.conf.Timeout > 0 {
-		postCtx, cancel := context.WithTimeoutCause(ctx, e.conf.Timeout, fmt.Errorf("configured enrichment timeout reached (%s)", e.conf.Timeout))
+		postCtx, cancel := context.WithTimeoutCause(ctx, time.Duration(e.conf.Timeout), fmt.Errorf("configured enrichment timeout reached (%s)", e.conf.Timeout))
 		defer cancel()
 		ctx = postCtx
 	}
