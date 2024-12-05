@@ -59,6 +59,14 @@ func (e *Enrichments) Apply(ctx context.Context, l log.Logger, alerts []*types.A
 		failed  = 0
 	)
 
+	if receiver, ok := notify.ReceiverName(ctx); ok {
+		l = log.With(l, "receiver", receiver)
+	}
+
+	if groupKey, ok := notify.GroupKey(ctx); ok {
+		l = log.With(l, "aggrGroup", groupKey)
+	}
+
 	// TODO: These could/should be done async. Need to decide if to allow dependent enrichments.
 	for i, enr := range e.enrichments {
 		newAlerts, err := enr.Apply(ctx, l, alerts)
@@ -100,9 +108,11 @@ type Data struct {
 	Alerts   []*types.Alert `json:"alerts"`
 
 	GroupLabels model.LabelSet `json:"groupLabels"`
+
+	Options map[string]string `json:"options"`
 }
 
-func GetData(ctx context.Context, l log.Logger, alerts []*types.Alert) *Data {
+func (e *Enrichment) GetData(ctx context.Context, l log.Logger, alerts []*types.Alert) *Data {
 	recv, ok := notify.ReceiverName(ctx)
 	if !ok {
 		level.Error(l).Log("msg", "Missing receiver")
@@ -117,11 +127,12 @@ func GetData(ctx context.Context, l log.Logger, alerts []*types.Alert) *Data {
 		Status:      string(types.Alerts(alerts...).Status()),
 		Alerts:      alerts,
 		GroupLabels: groupLabels,
+		Options:     e.conf.Options,
 	}
 }
 
 func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts []*types.Alert) ([]*types.Alert, error) {
-	data := GetData(ctx, l, alerts)
+	data := e.GetData(ctx, l, alerts)
 
 	var reqBuf bytes.Buffer
 	if err := json.NewEncoder(&reqBuf).Encode(data); err != nil {
@@ -135,6 +146,8 @@ func (e *Enrichment) Apply(ctx context.Context, l log.Logger, alerts []*types.Al
 		defer cancel()
 		ctx = postCtx
 	}
+
+	level.Info(l).Log("msg", "Enrichment started", "url", url, "request", reqBuf.String())
 
 	resp, err := notify.PostJSON(ctx, e.client, url, &reqBuf)
 	if err != nil {

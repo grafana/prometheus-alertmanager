@@ -478,6 +478,9 @@ route:
   repeat_interval: 3s
   enrichments:
   - url: 'http://%s'
+    options:
+      opt1: val1
+      opt2: val2
 
 receivers:
 - name: "default"

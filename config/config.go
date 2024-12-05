@@ -305,6 +305,9 @@ type Enrichment struct {
 	// URL to send POST request to.
 	URL SecretURL `yaml:"url" json:"url"`
 
+	// Options is optional arbitrary content to add to the request.
+	Options map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
+
 	// Timeout is the maximum length of time an enrichment can take.
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
