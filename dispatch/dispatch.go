@@ -378,14 +378,17 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		)
 		defer span.End()
 
-		_, _, err := d.stage.Exec(ctx, d.logger, alerts...)
+		tickTime, _ := notify.Now(ctx)
+		l := log.With(d.logger, "tickTime", tickTime)
+
+		_, _, err := d.stage.Exec(ctx, l, alerts...)
 		if err != nil {
-			lvl := level.Error(d.logger)
+			lvl := level.Error(l)
 			if errors.Is(ctx.Err(), context.Canceled) {
 				// It is expected for the context to be canceled on
 				// configuration reload or shutdown. In this case, the
 				// message should only be logged at the debug level.
-				lvl = level.Debug(d.logger)
+				lvl = level.Debug(l)
 			}
 			lvl.Log("msg", "Notify for alerts failed", "num_alerts", len(alerts), "err", err)
 
@@ -494,9 +497,7 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			ag.hasFlushed = true
 			ag.mtx.Unlock()
 
-			ag.flush(func(alerts ...*types.Alert) bool {
-				return nf(ctx, alerts...)
-			})
+			ag.flush(ctx, nf)
 
 			cancel()
 
@@ -533,7 +534,7 @@ func (ag *aggrGroup) empty() bool {
 }
 
 // flush sends notifications for all new alerts.
-func (ag *aggrGroup) flush(notify func(...*types.Alert) bool) {
+func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 	if ag.empty() {
 		return
 	}
@@ -553,9 +554,12 @@ func (ag *aggrGroup) flush(notify func(...*types.Alert) bool) {
 	}
 	sort.Stable(alertsSlice)
 
-	level.Debug(ag.logger).Log("msg", "flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
+	tickTime, _ := notify.Now(ctx)
+	l := log.With(ag.logger, "tickTime", tickTime)
 
-	if notify(alertsSlice...) {
+	level.Debug(l).Log("msg", "flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
+
+	if nf(ctx, alertsSlice...) {
 		for _, a := range alertsSlice {
 			// Only delete if the fingerprint has not been inserted
 			// again since we notified about it.
@@ -563,12 +567,12 @@ func (ag *aggrGroup) flush(notify func(...*types.Alert) bool) {
 			got, err := ag.alerts.Get(fp)
 			if err != nil {
 				// This should never happen.
-				level.Error(ag.logger).Log("msg", "failed to get alert", "err", err, "alert", a.String())
+				level.Error(l).Log("msg", "failed to get alert", "err", err, "alert", a.String())
 				continue
 			}
 			if a.Resolved() && got.UpdatedAt == a.UpdatedAt {
 				if err := ag.alerts.Delete(fp); err != nil {
-					level.Error(ag.logger).Log("msg", "error on delete alert", "err", err, "alert", a.String())
+					level.Error(l).Log("msg", "error on delete alert", "err", err, "alert", a.String())
 				}
 			}
 		}
