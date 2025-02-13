@@ -388,7 +388,10 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		)
 		defer span.End()
 
-		_, _, err := d.stage.Exec(ctx, d.logger, alerts...)
+		tickTime, _ := notify.Now(ctx)
+		l := log.With(d.logger, "tickTime", tickTime)
+
+		_, _, err := d.stage.Exec(ctx, l, alerts...)
 		if err != nil {
 			logger := d.logger.With("num_alerts", len(alerts), "err", err)
 			if errors.Is(ctx.Err(), context.Canceled) {
@@ -507,9 +510,7 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			ag.hasFlushed = true
 			ag.mtx.Unlock()
 
-			ag.flush(func(alerts ...*types.Alert) bool {
-				return nf(ctx, alerts...)
-			})
+			ag.flush(ctx, nf)
 
 			cancel()
 
@@ -546,7 +547,7 @@ func (ag *aggrGroup) empty() bool {
 }
 
 // flush sends notifications for all new alerts.
-func (ag *aggrGroup) flush(notify func(...*types.Alert) bool) {
+func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 	if ag.empty() {
 		return
 	}
@@ -570,6 +571,9 @@ func (ag *aggrGroup) flush(notify func(...*types.Alert) bool) {
 	sort.Stable(alertsSlice)
 
 	ag.logger.Debug("flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
+
+	tickTime, _ := notify.Now(ctx)
+	l := ag.logger.With, "tickTime", tickTime)
 
 	if notify(alertsSlice...) {
 		// Delete all resolved alerts as we just sent a notification for them,
