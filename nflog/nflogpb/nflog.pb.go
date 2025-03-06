@@ -5,10 +5,11 @@ package nflogpb
 
 import (
 	fmt "fmt"
+
 	_ "github.com/gogo/protobuf/gogoproto"
 	proto "github.com/gogo/protobuf/proto"
 	github_com_gogo_protobuf_types "github.com/gogo/protobuf/types"
-	_ "google/protobuf"
+
 	io "io"
 	math "math"
 	math_bits "math/bits"
