@@ -947,7 +947,7 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 
 	pipelineTime, ok := Now(ctx)
 	if !ok {
-		return ctx, nil, errors.New("tick time missing")
+		return ctx, nil, errors.New("pipeline time missing")
 	}
 
 	expiry := 2 * repeat
