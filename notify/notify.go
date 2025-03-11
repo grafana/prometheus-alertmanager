@@ -198,14 +198,14 @@ func ReceiverName(ctx context.Context) (string, bool) {
 	return v, ok
 }
 
-// GroupKey extracts a group key from the context. If none exists, the
+// GroupKey extracts a group key from the context. Iff none exists, the
 // second argument is false.
 func GroupKey(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(keyGroupKey).(string)
 	return v, ok
 }
 
-// GroupInterval extracts groupWait from the context. If none exists, the
+// GroupInterval extracts groupWait from the context. Iff none exists, the
 // second argument is false.
 func GroupInterval(ctx context.Context) (time.Duration, bool) {
 	v, ok := ctx.Value(keyGroupInterval).(time.Duration)
