@@ -127,7 +127,7 @@ const (
 	keyRepeatInterval
 	keyGroupLabels
 	keyGroupKey
-	keyGroupWait
+	keyGroupInterval
 	keyFiringAlerts
 	keyResolvedAlerts
 	keyNow
@@ -145,9 +145,9 @@ func WithGroupKey(ctx context.Context, s string) context.Context {
 	return context.WithValue(ctx, keyGroupKey, s)
 }
 
-// WithGroupWait populates a context with groupWait.
-func WithGroupWait(ctx context.Context, groupWait time.Duration) context.Context {
-	return context.WithValue(ctx, keyGroupWait, groupWait)
+// WithGroupInterval populates a context with groupWait.
+func WithGroupInterval(ctx context.Context, groupWait time.Duration) context.Context {
+	return context.WithValue(ctx, keyGroupInterval, groupWait)
 }
 
 // WithFiringAlerts populates a context with a slice of firing alerts.
@@ -205,10 +205,10 @@ func GroupKey(ctx context.Context) (string, bool) {
 	return v, ok
 }
 
-// GroupWait extracts groupWait from the context. If none exists, the
+// GroupInterval extracts groupWait from the context. If none exists, the
 // second argument is false.
-func GroupWait(ctx context.Context) (time.Duration, bool) {
-	v, ok := ctx.Value(keyGroupWait).(time.Duration)
+func GroupInterval(ctx context.Context) (time.Duration, bool) {
+	v, ok := ctx.Value(keyGroupInterval).(time.Duration)
 	return v, ok
 }
 
