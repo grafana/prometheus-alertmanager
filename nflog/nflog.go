@@ -19,7 +19,6 @@ package nflog
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -410,8 +409,6 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 		},
 		ExpiresAt: expiresAt,
 	}
-	mrsh, _ := json.MarshalIndent(e, "", "\t")
-	l.logger.Log("msg", "broadcasting entry", "entry", string(mrsh))
 
 	b, err := marshalMeshEntry(e)
 	if err != nil {
@@ -531,9 +528,6 @@ func (l *Log) Merge(b []byte) error {
 	now := l.now()
 
 	for _, e := range st {
-		mrsh, _ := json.MarshalIndent(e, "", "\t")
-		l.logger.Log("msg", "merging entry", "entry", string(mrsh))
-
 		if merged := l.st.merge(e, now); merged && !cluster.OversizedMessage(b) {
 			// If this is the first we've seen the message and it's
 			// not oversized, gossip it to other nodes. We don't
