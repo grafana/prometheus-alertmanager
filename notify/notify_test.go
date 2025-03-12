@@ -60,15 +60,15 @@ type testNflog struct {
 	qres []*nflogpb.Entry
 	qerr error
 
-	logFunc func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	logFunc func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, pipelineTime time.Time) error
 }
 
 func (l *testNflog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
 	return l.qres, l.qerr
 }
 
-func (l *testNflog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error {
-	return l.logFunc(r, gkey, firingAlerts, resolvedAlerts, expiry)
+func (l *testNflog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, pipelineTime time.Time) error {
+	return l.logFunc(r, gkey, firingAlerts, resolvedAlerts, expiry, pipelineTime)
 }
 
 func (l *testNflog) GC() (int, error) {
@@ -629,12 +629,29 @@ func TestSetNotifiesStage(t *testing.T) {
 	ctx = WithResolvedAlerts(ctx, []uint64{})
 	ctx = WithRepeatInterval(ctx, time.Hour)
 
-	tnflog.logFunc = func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error {
+	tnflog.logFunc = func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, pipelineLine time.Time) error {
 		require.Equal(t, s.recv, r)
 		require.Equal(t, "1", gkey)
 		require.Equal(t, []uint64{0, 1, 2}, firingAlerts)
 		require.Equal(t, []uint64{}, resolvedAlerts)
 		require.Equal(t, 2*time.Hour, expiry)
+		return nil
+	}
+	resctx, res, err = s.Exec(ctx, log.NewNopLogger(), alerts...)
+	require.EqualError(t, err, "pipeline time missing")
+	require.Nil(t, res)
+	require.NotNil(t, resctx)
+
+	now := time.Now()
+	ctx = WithNow(ctx, now)
+
+	tnflog.logFunc = func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, pipelineTime time.Time) error {
+		require.Equal(t, s.recv, r)
+		require.Equal(t, "1", gkey)
+		require.Equal(t, []uint64{0, 1, 2}, firingAlerts)
+		require.Equal(t, []uint64{}, resolvedAlerts)
+		require.Equal(t, 2*time.Hour, expiry)
+		require.Equal(t, now, pipelineTime)
 		return nil
 	}
 	resctx, res, err = s.Exec(ctx, log.NewNopLogger(), alerts...)
@@ -645,12 +662,13 @@ func TestSetNotifiesStage(t *testing.T) {
 	ctx = WithFiringAlerts(ctx, []uint64{})
 	ctx = WithResolvedAlerts(ctx, []uint64{0, 1, 2})
 
-	tnflog.logFunc = func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error {
+	tnflog.logFunc = func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, pipelineTime time.Time) error {
 		require.Equal(t, s.recv, r)
 		require.Equal(t, "1", gkey)
 		require.Equal(t, []uint64{}, firingAlerts)
 		require.Equal(t, []uint64{0, 1, 2}, resolvedAlerts)
 		require.Equal(t, 2*time.Hour, expiry)
+		require.Equal(t, now, pipelineTime)
 		return nil
 	}
 	resctx, res, err = s.Exec(ctx, log.NewNopLogger(), alerts...)
