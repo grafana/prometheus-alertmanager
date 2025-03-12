@@ -592,6 +592,193 @@ route:
 	require.Len(t, alertGroups, 6)
 }
 
+func TestWithDelayedStage(t *testing.T) {
+	/* NOTE: Testing the addition of wait times inside stages.
+	 * - Since the dispatcher will create a context with a deadline, the concern is that
+	 *   arbitrarily sleeping inside the exec pipeline could cause the context to expire.
+	 * - In theory, considering the worse case scenario, this could lead to a complete halt
+	 *   in notifications being delivered.
+	 * - The point here is to show that the dispatcher should be able to handle this case
+	 *   and continue to deliver notifications.
+	 * - The requirement is to make sure that the timeout function passed to the dispatcher
+	 *   takes such delays into account.
+	 * - In this case, even keeping it as the default (same as groupInterval), the test passes.
+	 * - This is a close call though. Reducing the timeout or increasing the delay stage by even
+	 *   a few milliseconds causes the test to fail.
+	 * - It's not a great solution, but having this delay added to the stage allows for better
+	 *   control over the feature release (e.g. releasing the sync mechanism to specific tenants, etc..).
+	 */
+	// make sure we use the same groupInterval in: (i) configuration, (ii) dispatcher timeout, and (iii) delay stage
+	groupInterval := 10 * time.Millisecond
+	confData := fmt.Sprintf(`receivers:
+- name: 'kafka'
+- name: 'prod'
+- name: 'testing'
+
+route:
+  group_by: ['alertname']
+  group_wait: 10ms
+  group_interval: %s
+  receiver: 'prod'
+  routes:
+  - match:
+      env: 'testing'
+    receiver: 'testing'
+    group_by: ['alertname', 'service']
+  - match:
+      env: 'prod'
+    receiver: 'prod'
+    group_by: ['alertname', 'service', 'cluster']
+    continue: true
+  - match:
+      kafka: 'yes'
+    receiver: 'kafka'
+    group_by: ['alertname', 'service', 'cluster']`, groupInterval.String())
+	conf, err := config.Load(confData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logger := log.NewNopLogger()
+	route := NewRoute(conf.Route, nil)
+	marker := types.NewMarker(prometheus.NewRegistry())
+	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alerts.Close()
+
+	timeout := func(d time.Duration) time.Duration { return d }
+
+	ss := make(sequentialStage, 0)
+	ss = append(ss, &delayStage{d: groupInterval})
+	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
+	ss = append(ss, recorder)
+
+	dispatcher := NewDispatcher(alerts, route, ss, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()))
+	go dispatcher.Run()
+	defer dispatcher.Stop()
+
+	// Create alerts. the dispatcher will automatically create the groups.
+	inputAlerts := []*types.Alert{
+		// Matches the parent route.
+		newAlert(model.LabelSet{"alertname": "OtherAlert", "cluster": "cc", "service": "dd"}),
+		// Matches the first sub-route.
+		newAlert(model.LabelSet{"env": "testing", "alertname": "TestingAlert", "service": "api", "instance": "inst1"}),
+		// Matches the second sub-route.
+		newAlert(model.LabelSet{"env": "prod", "alertname": "HighErrorRate", "cluster": "aa", "service": "api", "instance": "inst1"}),
+		newAlert(model.LabelSet{"env": "prod", "alertname": "HighErrorRate", "cluster": "aa", "service": "api", "instance": "inst2"}),
+		// Matches the second sub-route.
+		newAlert(model.LabelSet{"env": "prod", "alertname": "HighErrorRate", "cluster": "bb", "service": "api", "instance": "inst1"}),
+		// Matches the second and third sub-route.
+		newAlert(model.LabelSet{"env": "prod", "alertname": "HighLatency", "cluster": "bb", "service": "db", "kafka": "yes", "instance": "inst3"}),
+	}
+	alerts.Put(inputAlerts...)
+
+	// Let alerts get processed.
+	for i := 0; len(recorder.Alerts()) != 7 && i < 10; i++ {
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.Len(t, recorder.Alerts(), 7)
+
+	alertGroups, receivers := dispatcher.Groups(
+		func(*Route) bool {
+			return true
+		}, func(*types.Alert, time.Time) bool {
+			return true
+		},
+	)
+
+	require.Equal(t, AlertGroups{
+		&AlertGroup{
+			Alerts: []*types.Alert{inputAlerts[0]},
+			Labels: model.LabelSet{
+				"alertname": "OtherAlert",
+			},
+			Receiver: "prod",
+		},
+		&AlertGroup{
+			Alerts: []*types.Alert{inputAlerts[1]},
+			Labels: model.LabelSet{
+				"alertname": "TestingAlert",
+				"service":   "api",
+			},
+			Receiver: "testing",
+		},
+		&AlertGroup{
+			Alerts: []*types.Alert{inputAlerts[2], inputAlerts[3]},
+			Labels: model.LabelSet{
+				"alertname": "HighErrorRate",
+				"service":   "api",
+				"cluster":   "aa",
+			},
+			Receiver: "prod",
+		},
+		&AlertGroup{
+			Alerts: []*types.Alert{inputAlerts[4]},
+			Labels: model.LabelSet{
+				"alertname": "HighErrorRate",
+				"service":   "api",
+				"cluster":   "bb",
+			},
+			Receiver: "prod",
+		},
+		&AlertGroup{
+			Alerts: []*types.Alert{inputAlerts[5]},
+			Labels: model.LabelSet{
+				"alertname": "HighLatency",
+				"service":   "db",
+				"cluster":   "bb",
+			},
+			Receiver: "kafka",
+		},
+		&AlertGroup{
+			Alerts: []*types.Alert{inputAlerts[5]},
+			Labels: model.LabelSet{
+				"alertname": "HighLatency",
+				"service":   "db",
+				"cluster":   "bb",
+			},
+			Receiver: "prod",
+		},
+	}, alertGroups)
+	require.Equal(t, map[model.Fingerprint][]string{
+		inputAlerts[0].Fingerprint(): {"prod"},
+		inputAlerts[1].Fingerprint(): {"testing"},
+		inputAlerts[2].Fingerprint(): {"prod"},
+		inputAlerts[3].Fingerprint(): {"prod"},
+		inputAlerts[4].Fingerprint(): {"prod"},
+		inputAlerts[5].Fingerprint(): {"kafka", "prod"},
+	}, receivers)
+}
+
+type sequentialStage []notify.Stage
+
+func (ss sequentialStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	var err error
+	for _, s := range ss {
+		if ctx, alerts, err = s.Exec(ctx, l, alerts...); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return ctx, alerts, nil
+}
+
+type delayStage struct {
+	d time.Duration
+}
+
+func (ds *delayStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	select {
+	case <-time.After(ds.d):
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+
+	return ctx, alerts, nil
+}
+
 type recordStage struct {
 	mtx    sync.RWMutex
 	alerts map[string]map[model.Fingerprint]*types.Alert
@@ -610,19 +797,24 @@ func (r *recordStage) Alerts() []*types.Alert {
 }
 
 func (r *recordStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
-	r.mtx.Lock()
-	defer r.mtx.Unlock()
-	gk, ok := notify.GroupKey(ctx)
-	if !ok {
-		panic("GroupKey not present!")
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	default:
+		r.mtx.Lock()
+		defer r.mtx.Unlock()
+		gk, ok := notify.GroupKey(ctx)
+		if !ok {
+			panic("GroupKey not present!")
+		}
+		if _, ok := r.alerts[gk]; !ok {
+			r.alerts[gk] = make(map[model.Fingerprint]*types.Alert)
+		}
+		for _, a := range alerts {
+			r.alerts[gk][a.Fingerprint()] = a
+		}
+		return ctx, nil, nil
 	}
-	if _, ok := r.alerts[gk]; !ok {
-		r.alerts[gk] = make(map[model.Fingerprint]*types.Alert)
-	}
-	for _, a := range alerts {
-		r.alerts[gk][a.Fingerprint()] = a
-	}
-	return ctx, nil, nil
 }
 
 var (
