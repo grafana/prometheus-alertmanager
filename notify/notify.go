@@ -710,7 +710,7 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 }
 
 // Exec implements the Stage interface.
-func (n *DedupStage) Exec(ctx context.Context, _ *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+func (n *DedupStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
 	gkey, ok := GroupKey(ctx)
 	if !ok {
 		return ctx, nil, errors.New("group key missing")
@@ -755,10 +755,12 @@ func (n *DedupStage) Exec(ctx context.Context, _ *slog.Logger, alerts ...*types.
 		return ctx, nil, fmt.Errorf("unexpected entry result size %d", len(entries))
 	}
 
-	if n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval) {
-		return ctx, alerts, nil
+	needsUpdate, reason := n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval)
+	if !needsUpdate {
+		return ctx, nil, nil
 	}
-	return ctx, nil, nil
+	l.Debug("msg", "Need to notify", "aggrGroup", gkey, "receiver", n.recv.GroupName, "integration", n.recv.Integration, "reason", reason)
+	return ctx, alerts, nil
 }
 
 // RetryStage notifies via passed integration with exponential backoff until it
