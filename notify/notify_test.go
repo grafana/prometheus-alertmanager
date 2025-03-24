@@ -223,7 +223,7 @@ func TestDedupStageNeedsUpdate(t *testing.T) {
 		res, reason := s.needsUpdate(c.entry, c.firingAlerts, c.resolvedAlerts, c.repeat)
 		require.Equal(t, c.res, res)
 		if res {
-			assert.Equal(t, c.reason, reason)
+			require.Equal(t, c.reason, reason)
 		}
 	}
 }
