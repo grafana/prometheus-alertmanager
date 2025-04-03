@@ -540,16 +540,16 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 				continue
 			}
 
-			ag.next.Reset(ag.opts.GroupInterval)
-			ag.hasFlushed = true
-			ag.mtx.Unlock()
-
 			go func() {
 				if err := ag.nflog.Log(ag.logRecv, ag.GroupKey(), nil, nil, ag.opts.GroupInterval*2); err != nil {
 					// log the error and continue
 					level.Error(ag.logger).Log("msg", "failed to log tick time", "err", err)
 				}
 			}()
+
+			ag.next.Reset(ag.opts.GroupInterval)
+			ag.hasFlushed = true
+			ag.mtx.Unlock()
 
 			ag.flush(ctx, nf)
 
