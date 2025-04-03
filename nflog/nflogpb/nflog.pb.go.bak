@@ -5,22 +5,21 @@ package nflogpb
 
 import (
 	fmt "fmt"
+	_ "github.com/gogo/protobuf/gogoproto"
+	proto "github.com/gogo/protobuf/proto"
+	github_com_gogo_protobuf_types "github.com/gogo/protobuf/types"
+	_ "google/protobuf"
 	io "io"
 	math "math"
 	math_bits "math/bits"
 	time "time"
-
-	proto "github.com/gogo/protobuf/proto"
-	github_com_gogo_protobuf_types "github.com/gogo/protobuf/types"
 )
 
 // Reference imports to suppress errors if they are not otherwise used.
-var (
-	_ = proto.Marshal
-	_ = fmt.Errorf
-	_ = math.Inf
-	_ = time.Kitchen
-)
+var _ = proto.Marshal
+var _ = fmt.Errorf
+var _ = math.Inf
+var _ = time.Kitchen
 
 // This is a compile-time assertion to ensure that this generated file
 // is compatible with the proto package it is being compiled against.
@@ -47,11 +46,9 @@ func (*Receiver) ProtoMessage()    {}
 func (*Receiver) Descriptor() ([]byte, []int) {
 	return fileDescriptor_c2d9785ad9c3e602, []int{0}
 }
-
 func (m *Receiver) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-
 func (m *Receiver) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
 		return xxx_messageInfo_Receiver.Marshal(b, m, deterministic)
@@ -64,15 +61,12 @@ func (m *Receiver) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 		return b[:n], nil
 	}
 }
-
 func (m *Receiver) XXX_Merge(src proto.Message) {
 	xxx_messageInfo_Receiver.Merge(m, src)
 }
-
 func (m *Receiver) XXX_Size() int {
 	return m.Size()
 }
-
 func (m *Receiver) XXX_DiscardUnknown() {
 	xxx_messageInfo_Receiver.DiscardUnknown(m)
 }
@@ -111,11 +105,9 @@ func (*Entry) ProtoMessage()    {}
 func (*Entry) Descriptor() ([]byte, []int) {
 	return fileDescriptor_c2d9785ad9c3e602, []int{1}
 }
-
 func (m *Entry) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-
 func (m *Entry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
 		return xxx_messageInfo_Entry.Marshal(b, m, deterministic)
@@ -128,15 +120,12 @@ func (m *Entry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 		return b[:n], nil
 	}
 }
-
 func (m *Entry) XXX_Merge(src proto.Message) {
 	xxx_messageInfo_Entry.Merge(m, src)
 }
-
 func (m *Entry) XXX_Size() int {
 	return m.Size()
 }
-
 func (m *Entry) XXX_DiscardUnknown() {
 	xxx_messageInfo_Entry.DiscardUnknown(m)
 }
@@ -162,11 +151,9 @@ func (*MeshEntry) ProtoMessage()    {}
 func (*MeshEntry) Descriptor() ([]byte, []int) {
 	return fileDescriptor_c2d9785ad9c3e602, []int{2}
 }
-
 func (m *MeshEntry) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
 }
-
 func (m *MeshEntry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 	if deterministic {
 		return xxx_messageInfo_MeshEntry.Marshal(b, m, deterministic)
@@ -179,15 +166,12 @@ func (m *MeshEntry) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
 		return b[:n], nil
 	}
 }
-
 func (m *MeshEntry) XXX_Merge(src proto.Message) {
 	xxx_messageInfo_MeshEntry.Merge(m, src)
 }
-
 func (m *MeshEntry) XXX_Size() int {
 	return m.Size()
 }
-
 func (m *MeshEntry) XXX_DiscardUnknown() {
 	xxx_messageInfo_MeshEntry.DiscardUnknown(m)
 }
@@ -453,7 +437,6 @@ func encodeVarintNflog(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
-
 func (m *Receiver) Size() (n int) {
 	if m == nil {
 		return 0
@@ -545,11 +528,9 @@ func (m *MeshEntry) Size() (n int) {
 func sovNflog(x uint64) (n int) {
 	return (math_bits.Len64(x|1) + 6) / 7
 }
-
 func sozNflog(x uint64) (n int) {
 	return sovNflog(uint64((x << 1) ^ uint64((int64(x) >> 63))))
 }
-
 func (m *Receiver) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -684,7 +665,6 @@ func (m *Receiver) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *Entry) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -1081,7 +1061,6 @@ func (m *Entry) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-
 func (m *MeshEntry) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
 	iNdEx := 0
@@ -1202,7 +1181,6 @@ func (m *MeshEntry) Unmarshal(dAtA []byte) error {
 	}
 	return nil
 }
-
 func skipNflog(dAtA []byte) (n int, err error) {
 	l := len(dAtA)
 	iNdEx := 0
