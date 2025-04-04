@@ -469,8 +469,6 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 	return ag
 }
 
-var ErrUnexpectedEntryResultSize = errors.New("unexpected entry result size")
-
 func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 	entries, err := ag.nflog.Query(
 		nflog.QGroupKey(ag.GroupKey()),
@@ -479,14 +477,19 @@ func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
 		return 0, fmt.Errorf("error querying log entry: %w", err)
 	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
-		return ag.opts.GroupInterval, nil
+		return 0, nil
 	} else if len(entries) > 1 {
-		return 0, fmt.Errorf("%w: %d", ErrUnexpectedEntryResultSize, len(entries))
+		return 0, fmt.Errorf("unexpected entry result size: %d", len(entries))
 	}
 
 	level.Info(ag.logger).Log("msg", "found log entry", "entry", entries[0], "flush_time", entries[0].FlushTime, "now", now)
 
-	if next := entries[0].FlushTime.Add(ag.opts.GroupInterval); next.Before(now) {
+	ft := entries[0].FlushTime
+	if ft == nil || ft == &(time.Time{}) {
+		return 0, fmt.Errorf("flush time nil or empty")
+	}
+
+	if next := ft.Add(ag.opts.GroupInterval); next.Before(now) {
 		return now.Sub(next), nil
 	}
 
