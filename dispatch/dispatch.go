@@ -543,7 +543,8 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			}
 
 			go func() {
-				if err := ag.nflog.Log(ag.logRecv, ag.GroupKey(), nil, nil, ag.opts.GroupInterval*2); err != nil {
+				level.Info(ag.logger).Log("msg", "logging flush time", "now", now)
+				if err := ag.nflog.Log(ag.logRecv, ag.GroupKey(), nil, nil, ag.opts.GroupInterval*2, &now); err != nil {
 					// log the error and continue
 					level.Error(ag.logger).Log("msg", "failed to log tick time", "err", err)
 				}
