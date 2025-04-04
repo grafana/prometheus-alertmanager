@@ -484,6 +484,8 @@ func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 		return 0, fmt.Errorf("%w: %d", ErrUnexpectedEntryResultSize, len(entries))
 	}
 
+	level.Info(ag.logger).Log("msg", "found log entry", "entry", entries[0], "flush_time", entries[0].FlushTime, "now", now)
+
 	if next := entries[0].FlushTime.Add(ag.opts.GroupInterval); next.Before(now) {
 		return now.Sub(next), nil
 	}
