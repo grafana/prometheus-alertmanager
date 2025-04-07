@@ -477,6 +477,7 @@ func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
 		return 0, fmt.Errorf("error querying log entry: %w", err)
 	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
+		level.Info(ag.logger).Log("msg", "log entry not found", "entry", entries[0], "flush_time", "now", now)
 		return 0, nil
 	} else if len(entries) > 1 {
 		return 0, fmt.Errorf("unexpected entry result size: %d", len(entries))
@@ -490,7 +491,7 @@ func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 	}
 
 	if next := ft.Add(ag.opts.GroupInterval); next.After(now) {
-		return now.Sub(next), nil
+		return next.Sub(now), nil
 	}
 
 	return 0, nil
