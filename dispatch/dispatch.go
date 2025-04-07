@@ -485,11 +485,11 @@ func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 	level.Info(ag.logger).Log("msg", "found log entry", "entry", entries[0], "flush_time", entries[0].FlushTime, "now", now)
 
 	ft := entries[0].FlushTime
-	if ft == nil || ft == &(time.Time{}) {
+	if (ft == nil) || (*ft == time.Time{}) {
 		return 0, fmt.Errorf("flush time nil or empty")
 	}
 
-	if next := ft.Add(ag.opts.GroupInterval); next.Before(now) {
+	if next := ft.Add(ag.opts.GroupInterval); next.After(now) {
 		return now.Sub(next), nil
 	}
 
