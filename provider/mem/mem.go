@@ -207,6 +207,25 @@ func (a *Alerts) Put(alerts ...*types.Alert) error {
 		if old, err := a.alerts.Get(fp); err == nil {
 			existing = true
 
+			level.Debug(a.logger).Log("msg",
+				"Merging alerts",
+				"existing_alert",
+				old,
+				"starts_at",
+				old.StartsAt,
+				"ends_at",
+				old.EndsAt,
+				"updated_at",
+				old.UpdatedAt,
+				"new_alert",
+				alert,
+				"starts_at",
+				alert.StartsAt,
+				"ends_at",
+				alert.EndsAt,
+				"updated_at",
+				alert.UpdatedAt)
+
 			// Merge alerts if there is an overlap in activity range.
 			if (alert.EndsAt.After(old.StartsAt) && alert.EndsAt.Before(old.EndsAt)) ||
 				(alert.StartsAt.After(old.StartsAt) && alert.StartsAt.Before(old.EndsAt)) {
