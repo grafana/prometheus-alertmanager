@@ -477,7 +477,7 @@ func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
 	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
 		return 0, fmt.Errorf("error querying log entry: %w", err)
 	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
-		level.Info(ag.logger).Log("msg", "log entry not found", "entry", entries[0], "flush_time", "now", now)
+		level.Info(ag.logger).Log("msg", "log entry not found", "flush_time", "now", now)
 		return 0, nil
 	} else if len(entries) > 1 {
 		return 0, fmt.Errorf("unexpected entry result size: %d", len(entries))
@@ -534,14 +534,14 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			ctx = notify.WithMuteTimeIntervals(ctx, ag.opts.MuteTimeIntervals)
 			ctx = notify.WithActiveTimeIntervals(ctx, ag.opts.ActiveTimeIntervals)
 
-			// Wait the configured interval before calling flush again.
-			ag.mtx.Lock()
 			if next, err := ag.nextTick(now); err != nil {
 				// log the error and continue
 				level.Error(ag.logger).Log("msg", "failed to calculate next tick", "err", err)
 			} else if next > 0 {
 				level.Info(ag.logger).Log("msg", "next tick in the future, waiting..", "next", next)
+				ag.mtx.Lock()
 				ag.next.Reset(next)
+				ag.hasFlushed = true
 				ag.mtx.Unlock()
 				continue
 			}
@@ -554,6 +554,8 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 				}
 			}()
 
+			// Wait the configured interval before calling flush again.
+			ag.mtx.Lock()
 			ag.next.Reset(ag.opts.GroupInterval)
 			ag.hasFlushed = true
 			ag.mtx.Unlock()
