@@ -400,7 +400,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 				// message should only be logged at the debug level.
 				logger.Debug("Notify for alerts failed")
 			} else {
-				logger.Error("Notify for alerts failed")
+				logger.Error("Notify for alerts failed", "aggrGroup", ag, "alerts", fmt.Sprintf("%v", alerts))
 			}
 			span.RecordError(fmt.Errorf("notify for alerts failed: %w", err))
 			span.SetStatus(codes.Error, err.Error())
