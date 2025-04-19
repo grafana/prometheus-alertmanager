@@ -127,6 +127,7 @@ const (
 	keyRepeatInterval
 	keyGroupLabels
 	keyGroupKey
+	keyGroupInterval
 	keyFiringAlerts
 	keyResolvedAlerts
 	keyNow
@@ -142,6 +143,11 @@ func WithReceiverName(ctx context.Context, rcv string) context.Context {
 // WithGroupKey populates a context with a group key.
 func WithGroupKey(ctx context.Context, s string) context.Context {
 	return context.WithValue(ctx, keyGroupKey, s)
+}
+
+// WithGroupInterval populates a context with groupWait.
+func WithGroupInterval(ctx context.Context, groupWait time.Duration) context.Context {
+	return context.WithValue(ctx, keyGroupInterval, groupWait)
 }
 
 // WithFiringAlerts populates a context with a slice of firing alerts.
@@ -196,6 +202,13 @@ func ReceiverName(ctx context.Context) (string, bool) {
 // second argument is false.
 func GroupKey(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(keyGroupKey).(string)
+	return v, ok
+}
+
+// GroupInterval extracts groupWait from the context. Iff none exists, the
+// second argument is false.
+func GroupInterval(ctx context.Context) (time.Duration, bool) {
+	v, ok := ctx.Value(keyGroupInterval).(time.Duration)
 	return v, ok
 }
 
@@ -255,7 +268,7 @@ func (f StageFunc) Exec(ctx context.Context, l log.Logger, alerts ...*types.Aler
 }
 
 type NotificationLog interface {
-	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, tickTime time.Time) error
 	Query(params ...nflog.QueryParam) ([]*nflogpb.Entry, error)
 }
 
@@ -947,9 +960,15 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	if !ok {
 		return ctx, nil, errors.New("repeat interval missing")
 	}
+
+	pipelineTime, ok := Now(ctx)
+	if !ok {
+		return ctx, nil, errors.New("pipeline time missing")
+	}
+
 	expiry := 2 * repeat
 
-	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry)
+	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry, pipelineTime)
 }
 
 type timeStage struct {

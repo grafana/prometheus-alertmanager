@@ -487,6 +487,7 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 
 			// Populate context with information needed along the pipeline.
 			ctx = notify.WithGroupKey(ctx, ag.GroupKey())
+			ctx = notify.WithGroupInterval(ctx, ag.opts.GroupInterval)
 			ctx = notify.WithGroupLabels(ctx, ag.labels)
 			ctx = notify.WithReceiverName(ctx, ag.opts.Receiver)
 			ctx = notify.WithRepeatInterval(ctx, ag.opts.RepeatInterval)
