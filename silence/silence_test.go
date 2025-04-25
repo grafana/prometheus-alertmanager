@@ -618,7 +618,7 @@ func TestSilenceNoLimits(t *testing.T) {
 		Comment:  strings.Repeat("c", 2<<9),
 	}
 	require.NoError(t, s.Set(sil))
-	require.NotEqual(t, "", sil.Id)
+	require.NotEmpty(t, sil.Id)
 }
 
 func TestSilenceUpsert(t *testing.T) {

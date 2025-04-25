@@ -573,7 +573,7 @@ func TestRetryStageNoResolved(t *testing.T) {
 	// All alerts are resolved.
 	sent = sent[:0]
 	ctx = WithFiringAlerts(ctx, []uint64{})
-	alerts[1].Alert.EndsAt = time.Now().Add(-time.Hour)
+	alerts[1].EndsAt = time.Now().Add(-time.Hour)
 
 	resctx, res, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.NoError(t, err)
@@ -618,7 +618,7 @@ func TestRetryStageSendResolved(t *testing.T) {
 	// All alerts are resolved.
 	sent = sent[:0]
 	ctx = WithFiringAlerts(ctx, []uint64{})
-	alerts[1].Alert.EndsAt = time.Now().Add(-time.Hour)
+	alerts[1].EndsAt = time.Now().Add(-time.Hour)
 
 	resctx, res, err = r.Exec(ctx, log.NewNopLogger(), alerts...)
 	require.NoError(t, err)
