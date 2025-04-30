@@ -585,7 +585,7 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 		ag.ctx,
 		ag.opts.GroupWait,
 		nflog,
-		ag.routeKey,
+		ag.GroupKey(),
 		ag.opts.Receiver,
 		ag.logger,
 		ag.opts.GroupInterval,
