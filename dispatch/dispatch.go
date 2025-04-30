@@ -417,12 +417,6 @@ func getGroupLabels(alert *types.Alert, route *Route) model.LabelSet {
 	return groupLabels
 }
 
-type timer interface {
-	GetC() <-chan time.Time
-	Reset(time.Duration) bool
-	Stop() bool
-}
-
 // aggrGroup aggregates alert fingerprints into groups to which a
 // common set of routing options applies.
 // It emits notifications in the specified intervals.
@@ -436,9 +430,8 @@ type aggrGroup struct {
 	ctx     context.Context
 	cancel  func()
 	done    chan struct{}
-	next    timer
+	timer   *syncTimer
 	timeout func(time.Duration) time.Duration
-	nflog   notify.NotificationLog
 
 	mtx        sync.RWMutex
 	hasFlushed bool
@@ -551,6 +544,24 @@ func (st *syncTimer) GetC() <-chan time.Time {
 	return st.c
 }
 
+func (st *syncTimer) logFlush(now time.Time) {
+	if err := st.nflog.Log(
+		&nflogpb.Receiver{
+			GroupName:   st.routeKey,
+			Integration: st.receiver,
+			Idx:         math.MaxUint32,
+		},
+		st.routeKey,
+		nil,
+		nil,
+		st.groupInterval*2,
+		&now,
+	); err != nil {
+		// log the error and continue
+		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)
+	}
+}
+
 // newAggrGroup returns a new aggregation group.
 func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, nflog notify.NotificationLog) *aggrGroup {
 	if to == nil {
@@ -563,7 +574,6 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 		timeout:  to,
 		alerts:   store.NewAlerts(),
 		done:     make(chan struct{}),
-		nflog:    nflog,
 	}
 	ag.ctx, ag.cancel = context.WithCancel(ctx)
 
@@ -571,7 +581,7 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	// Set an initial one-time wait before flushing
 	// the first batch of notifications.
-	ag.next = newSyncTimer(
+	ag.timer = newSyncTimer(
 		ag.ctx,
 		ag.opts.GroupWait,
 		nflog,
@@ -598,11 +608,11 @@ func (ag *aggrGroup) String() string {
 
 func (ag *aggrGroup) run(nf notifyFunc) {
 	defer close(ag.done)
-	defer ag.next.Stop()
+	defer ag.timer.Stop()
 
 	for {
 		select {
-		case now := <-ag.next.GetC():
+		case now := <-ag.timer.GetC():
 			// Give the notifications time until the next flush to
 			// finish before terminating them.
 			ctx, cancel := context.WithTimeout(ag.ctx, ag.timeout(ag.opts.GroupInterval))
@@ -621,28 +631,11 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			ctx = notify.WithMuteTimeIntervals(ctx, ag.opts.MuteTimeIntervals)
 			ctx = notify.WithActiveTimeIntervals(ctx, ag.opts.ActiveTimeIntervals)
 
-			go func() {
-				level.Info(ag.logger).Log("msg", "logging flush time", "now", now)
-				if err := ag.nflog.Log(
-					&nflogpb.Receiver{
-						GroupName:   ag.routeKey,
-						Integration: ag.opts.Receiver,
-						Idx:         math.MaxUint32,
-					},
-					ag.GroupKey(),
-					nil,
-					nil,
-					ag.opts.GroupInterval*2,
-					&now,
-				); err != nil {
-					// log the error and continue
-					level.Error(ag.logger).Log("msg", "failed to log tick time", "err", err)
-				}
-			}()
+			ag.timer.logFlush(now)
 
 			// Wait the configured interval before calling flush again.
 			ag.mtx.Lock()
-			ag.next.Reset(ag.opts.GroupInterval)
+			ag.timer.Reset(ag.opts.GroupInterval)
 			ag.hasFlushed = true
 			ag.mtx.Unlock()
 
@@ -674,7 +667,7 @@ func (ag *aggrGroup) insert(alert *types.Alert) {
 	ag.mtx.Lock()
 	defer ag.mtx.Unlock()
 	if !ag.hasFlushed && alert.StartsAt.Add(ag.opts.GroupWait).Before(time.Now()) {
-		ag.next.Reset(0)
+		ag.timer.Reset(0)
 	}
 }
 
