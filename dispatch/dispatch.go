@@ -417,6 +417,12 @@ func getGroupLabels(alert *types.Alert, route *Route) model.LabelSet {
 	return groupLabels
 }
 
+type timer interface {
+	GetC() <-chan time.Time
+	Reset(time.Duration) bool
+	Stop() bool
+}
+
 // aggrGroup aggregates alert fingerprints into groups to which a
 // common set of routing options applies.
 // It emits notifications in the specified intervals.
@@ -431,11 +437,28 @@ type aggrGroup struct {
 	cancel  func()
 	done    chan struct{}
 	next    *time.Timer
+	next    timer
 	timeout func(time.Duration) time.Duration
 	nflog   notify.NotificationLog
 
 	mtx        sync.RWMutex
 	hasFlushed bool
+}
+
+type simpleTimer struct {
+	t *time.Timer
+}
+
+func (t *simpleTimer) GetC() <-chan time.Time {
+	return t.t.C
+}
+
+func (t *simpleTimer) Reset(d time.Duration) bool {
+	return t.t.Reset(d)
+}
+
+func (t *simpleTimer) Stop() bool {
+	return t.t.Stop()
 }
 
 // newAggrGroup returns a new aggregation group.
@@ -458,7 +481,7 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	// Set an initial one-time wait before flushing
 	// the first batch of notifications.
-	ag.next = time.NewTimer(ag.opts.GroupWait)
+	ag.next = &simpleTimer{t: time.NewTimer(ag.opts.GroupWait)}
 
 	return ag
 }
@@ -522,7 +545,7 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 
 	for {
 		select {
-		case now := <-ag.next.C:
+		case now := <-ag.next.GetC():
 			// Give the notifications time until the next flush to
 			// finish before terminating them.
 			ctx, cancel := context.WithTimeout(ag.ctx, ag.timeout(ag.opts.GroupInterval))
