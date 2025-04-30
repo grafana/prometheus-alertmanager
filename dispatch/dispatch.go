@@ -436,7 +436,6 @@ type aggrGroup struct {
 	ctx     context.Context
 	cancel  func()
 	done    chan struct{}
-	next    *time.Timer
 	next    timer
 	timeout func(time.Duration) time.Duration
 	nflog   notify.NotificationLog
@@ -445,20 +444,111 @@ type aggrGroup struct {
 	hasFlushed bool
 }
 
-type simpleTimer struct {
-	t *time.Timer
+type syncTimer struct {
+	c             chan time.Time
+	t             *time.Timer
+	nflog         notify.NotificationLog
+	routeKey      string
+	receiver      string
+	logger        log.Logger
+	groupInterval time.Duration
 }
 
-func (t *simpleTimer) GetC() <-chan time.Time {
-	return t.t.C
+func newSyncTimer(
+	ctx context.Context,
+	groupWait time.Duration,
+	nflog notify.NotificationLog,
+	routeKey string,
+	receiver string,
+	logger log.Logger,
+	groupInterval time.Duration,
+) *syncTimer {
+	st := &syncTimer{
+		t:             time.NewTimer(groupWait),
+		c:             make(chan time.Time),
+		nflog:         nflog,
+		routeKey:      routeKey,
+		receiver:      receiver,
+		logger:        logger,
+		groupInterval: groupInterval,
+	}
+
+	go st.start(ctx)
+
+	return st
 }
 
-func (t *simpleTimer) Reset(d time.Duration) bool {
-	return t.t.Reset(d)
+func (st *syncTimer) start(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-st.t.C:
+			if next, err := st.nextTick(now); err != nil {
+				// log the error and continue
+				level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
+			} else if next > 0 {
+				level.Info(st.logger).Log("msg", "next tick in the future, waiting..", "next", next)
+				st.t.Reset(next)
+				continue
+			}
+
+			st.c <- now
+		}
+	}
 }
 
-func (t *simpleTimer) Stop() bool {
-	return t.t.Stop()
+func (st *syncTimer) getLastSync() (*time.Time, error) {
+	entries, err := st.nflog.Query(
+		nflog.QGroupKey(st.routeKey),
+		nflog.QReceiver(&nflogpb.Receiver{
+			GroupName:   st.routeKey,
+			Integration: st.receiver,
+			Idx:         math.MaxUint32,
+		}),
+	)
+	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
+		return nil, fmt.Errorf("error querying log entry: %w", err)
+	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
+		level.Info(st.logger).Log("msg", "log entry not found")
+		return nil, nil
+	} else if len(entries) > 1 {
+		return nil, fmt.Errorf("unexpected entry result size: %d", len(entries))
+	}
+
+	ft := entries[0].FlushTime
+	if (ft == nil) || (*ft == time.Time{}) {
+		return nil, fmt.Errorf("flush time nil or empty")
+	}
+
+	return entries[0].FlushTime, nil
+}
+
+func (st *syncTimer) nextTick(now time.Time) (time.Duration, error) {
+	ft, err := st.getLastSync()
+	if err != nil {
+		return 0, err
+	}
+
+	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
+
+	if next := ft.Add(st.groupInterval); next.After(now) {
+		return next.Sub(now), nil
+	}
+
+	return 0, nil
+}
+
+func (st *syncTimer) Reset(d time.Duration) bool {
+	return st.t.Reset(d)
+}
+
+func (st *syncTimer) Stop() bool {
+	return st.t.Stop()
+}
+
+func (st *syncTimer) GetC() <-chan time.Time {
+	return st.c
 }
 
 // newAggrGroup returns a new aggregation group.
@@ -481,50 +571,17 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	// Set an initial one-time wait before flushing
 	// the first batch of notifications.
-	ag.next = &simpleTimer{t: time.NewTimer(ag.opts.GroupWait)}
+	ag.next = newSyncTimer(
+		ag.ctx,
+		ag.opts.GroupWait,
+		nflog,
+		ag.routeKey,
+		ag.opts.Receiver,
+		ag.logger,
+		ag.opts.GroupInterval,
+	)
 
 	return ag
-}
-
-func (ag *aggrGroup) getLastSync() (*time.Time, error) {
-	entries, err := ag.nflog.Query(
-		nflog.QGroupKey(ag.GroupKey()),
-		nflog.QReceiver(&nflogpb.Receiver{
-			GroupName:   ag.routeKey,
-			Integration: ag.opts.Receiver,
-			Idx:         math.MaxUint32,
-		}),
-	)
-	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
-		return nil, fmt.Errorf("error querying log entry: %w", err)
-	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
-		level.Info(ag.logger).Log("msg", "log entry not found")
-		return nil, nil
-	} else if len(entries) > 1 {
-		return nil, fmt.Errorf("unexpected entry result size: %d", len(entries))
-	}
-
-	ft := entries[0].FlushTime
-	if (ft == nil) || (*ft == time.Time{}) {
-		return nil, fmt.Errorf("flush time nil or empty")
-	}
-
-	return entries[0].FlushTime, nil
-}
-
-func (ag *aggrGroup) nextTick(now time.Time) (time.Duration, error) {
-	ft, err := ag.getLastSync()
-	if err != nil {
-		return 0, err
-	}
-
-	level.Debug(ag.logger).Log("msg", "found flush log entry", "flush_time", ft)
-
-	if next := ft.Add(ag.opts.GroupInterval); next.After(now) {
-		return next.Sub(now), nil
-	}
-
-	return 0, nil
 }
 
 func (ag *aggrGroup) fingerprint() model.Fingerprint {
@@ -563,18 +620,6 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			ctx = notify.WithRepeatInterval(ctx, ag.opts.RepeatInterval)
 			ctx = notify.WithMuteTimeIntervals(ctx, ag.opts.MuteTimeIntervals)
 			ctx = notify.WithActiveTimeIntervals(ctx, ag.opts.ActiveTimeIntervals)
-
-			if next, err := ag.nextTick(now); err != nil {
-				// log the error and continue
-				level.Error(ag.logger).Log("msg", "failed to calculate next tick", "err", err)
-			} else if next > 0 {
-				level.Info(ag.logger).Log("msg", "next tick in the future, waiting..", "next", next)
-				ag.mtx.Lock()
-				ag.next.Reset(next)
-				ag.hasFlushed = true
-				ag.mtx.Unlock()
-				continue
-			}
 
 			go func() {
 				level.Info(ag.logger).Log("msg", "logging flush time", "now", now)
