@@ -484,12 +484,12 @@ func (st *syncTimer) start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-st.t.C:
-			if next, err := st.nextTick(now); err != nil {
+			if wait, err := st.getWaitForNextTick(now); err != nil {
 				// log the error and continue
 				level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
-			} else if next > 0 {
-				level.Info(st.logger).Log("msg", "next tick in the future, waiting..", "next", next)
-				st.t.Reset(next)
+			} else if wait > 0 {
+				level.Info(st.logger).Log("msg", "next tick in the future, waiting..", "next", wait)
+				st.t.Reset(wait)
 				continue
 			}
 
@@ -524,7 +524,7 @@ func (st *syncTimer) getLastSync() (*time.Time, error) {
 	return entries[0].FlushTime, nil
 }
 
-func (st *syncTimer) nextTick(now time.Time) (time.Duration, error) {
+func (st *syncTimer) getWaitForNextTick(now time.Time) (time.Duration, error) {
 	ft, err := st.getLastSync()
 	if err != nil {
 		return 0, err
