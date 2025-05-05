@@ -486,6 +486,8 @@ func (st *syncTimer) start(ctx context.Context) {
 				continue
 			}
 
+			level.Debug(st.logger).Log("msg", "synced flush", "pipeline_time", now)
+
 			st.logFlush(now)
 
 			st.c <- now
