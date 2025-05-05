@@ -486,6 +486,8 @@ func (st *syncTimer) start(ctx context.Context) {
 				continue
 			}
 
+			st.logFlush(now)
+
 			st.c <- now
 		}
 	}
@@ -630,8 +632,6 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 			ctx = notify.WithRepeatInterval(ctx, ag.opts.RepeatInterval)
 			ctx = notify.WithMuteTimeIntervals(ctx, ag.opts.MuteTimeIntervals)
 			ctx = notify.WithActiveTimeIntervals(ctx, ag.opts.ActiveTimeIntervals)
-
-			ag.timer.logFlush(now)
 
 			// Wait the configured interval before calling flush again.
 			ag.mtx.Lock()
