@@ -103,6 +103,8 @@ type Dispatcher struct {
 	logger log.Logger
 
 	nflog notify.NotificationLog
+
+	syncTimer bool
 }
 
 // Limits describes limits used by Dispatcher.
@@ -124,20 +126,22 @@ func NewDispatcher(
 	l log.Logger,
 	m *DispatcherMetrics,
 	nflog notify.NotificationLog,
+	syncTimer bool,
 ) *Dispatcher {
 	if lim == nil {
 		lim = nilLimits{}
 	}
 
 	disp := &Dispatcher{
-		alerts:  ap,
-		stage:   s,
-		route:   r,
-		timeout: to,
-		logger:  log.With(l, "component", "dispatcher"),
-		metrics: m,
-		limits:  lim,
-		nflog:   nflog,
+		alerts:    ap,
+		stage:     s,
+		route:     r,
+		timeout:   to,
+		logger:    log.With(l, "component", "dispatcher"),
+		metrics:   m,
+		limits:    lim,
+		nflog:     nflog,
+		syncTimer: syncTimer,
 	}
 	return disp
 }
@@ -367,7 +371,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		return
 	}
 
-	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.nflog)
+	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.nflog, d.syncTimer)
 	routeGroups[fp] = ag
 	d.aggrGroupsNum++
 	d.metrics.aggrGroups.Inc()
@@ -430,11 +434,33 @@ type aggrGroup struct {
 	ctx     context.Context
 	cancel  func()
 	done    chan struct{}
-	timer   *syncTimer
+	timer   timer
 	timeout func(time.Duration) time.Duration
 
 	mtx        sync.RWMutex
 	hasFlushed bool
+}
+
+type timer interface {
+	GetC() <-chan time.Time
+	Reset(d time.Duration) bool
+	Stop() bool
+}
+
+type standardTimer struct {
+	t *time.Timer
+}
+
+func (sat *standardTimer) GetC() <-chan time.Time {
+	return sat.t.C
+}
+
+func (sat *standardTimer) Reset(d time.Duration) bool {
+	return sat.t.Reset(d)
+}
+
+func (sat *standardTimer) Stop() bool {
+	return sat.t.Stop()
 }
 
 type syncTimer struct {
@@ -567,7 +593,7 @@ func (st *syncTimer) logFlush(now time.Time) {
 }
 
 // newAggrGroup returns a new aggregation group.
-func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, nflog notify.NotificationLog) *aggrGroup {
+func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, nflog notify.NotificationLog, syncTimer bool) *aggrGroup {
 	if to == nil {
 		to = func(d time.Duration) time.Duration { return d }
 	}
@@ -583,17 +609,21 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	ag.logger = log.With(logger, "aggrGroup", ag)
 
-	// Set an initial one-time wait before flushing
-	// the first batch of notifications.
-	ag.timer = newSyncTimer(
-		ag.ctx,
-		ag.opts.GroupWait,
-		nflog,
-		ag.GroupKey(),
-		ag.opts.Receiver,
-		ag.logger,
-		ag.opts.GroupInterval,
-	)
+	if syncTimer {
+		// Set an initial one-time wait before flushing
+		// the first batch of notifications.
+		ag.timer = newSyncTimer(
+			ag.ctx,
+			ag.opts.GroupWait,
+			nflog,
+			ag.GroupKey(),
+			ag.opts.Receiver,
+			ag.logger,
+			ag.opts.GroupInterval,
+		)
+	} else {
+		ag.timer = &standardTimer{time.NewTimer(ag.opts.GroupWait)}
+	}
 
 	return ag
 }
