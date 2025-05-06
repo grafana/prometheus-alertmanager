@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -30,6 +31,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/prometheus/alertmanager/nflog"
+	"github.com/prometheus/alertmanager/nflog/nflogpb"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/provider"
 	"github.com/prometheus/alertmanager/store"
@@ -98,6 +101,10 @@ type Dispatcher struct {
 	cancel func()
 
 	logger log.Logger
+
+	nflog notify.NotificationLog
+
+	syncTimer bool
 }
 
 // Limits describes limits used by Dispatcher.
@@ -118,19 +125,23 @@ func NewDispatcher(
 	lim Limits,
 	l log.Logger,
 	m *DispatcherMetrics,
+	nflog notify.NotificationLog,
+	syncTimer bool,
 ) *Dispatcher {
 	if lim == nil {
 		lim = nilLimits{}
 	}
 
 	disp := &Dispatcher{
-		alerts:  ap,
-		stage:   s,
-		route:   r,
-		timeout: to,
-		logger:  log.With(l, "component", "dispatcher"),
-		metrics: m,
-		limits:  lim,
+		alerts:    ap,
+		stage:     s,
+		route:     r,
+		timeout:   to,
+		logger:    log.With(l, "component", "dispatcher"),
+		metrics:   m,
+		limits:    lim,
+		nflog:     nflog,
+		syncTimer: syncTimer,
 	}
 	return disp
 }
@@ -360,7 +371,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		return
 	}
 
-	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger)
+	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.nflog, d.syncTimer)
 	routeGroups[fp] = ag
 	d.aggrGroupsNum++
 	d.metrics.aggrGroups.Inc()
@@ -425,15 +436,166 @@ type aggrGroup struct {
 	ctx     context.Context
 	cancel  func()
 	done    chan struct{}
-	next    *time.Timer
+	timer   timer
 	timeout func(time.Duration) time.Duration
 
 	mtx        sync.RWMutex
 	hasFlushed bool
 }
 
+type timer interface {
+	GetC() <-chan time.Time
+	Reset(d time.Duration) bool
+	Stop() bool
+}
+
+type standardTimer struct {
+	t *time.Timer
+}
+
+func (sat *standardTimer) GetC() <-chan time.Time {
+	return sat.t.C
+}
+
+func (sat *standardTimer) Reset(d time.Duration) bool {
+	return sat.t.Reset(d)
+}
+
+func (sat *standardTimer) Stop() bool {
+	return sat.t.Stop()
+}
+
+type syncTimer struct {
+	c             chan time.Time
+	t             *time.Timer
+	nflog         notify.NotificationLog
+	routeKey      string
+	receiver      string
+	logger        log.Logger
+	groupInterval time.Duration
+}
+
+func newSyncTimer(
+	ctx context.Context,
+	groupWait time.Duration,
+	nflog notify.NotificationLog,
+	routeKey string,
+	receiver string,
+	logger log.Logger,
+	groupInterval time.Duration,
+) *syncTimer {
+	st := &syncTimer{
+		t:             time.NewTimer(groupWait),
+		c:             make(chan time.Time),
+		nflog:         nflog,
+		routeKey:      routeKey,
+		receiver:      receiver,
+		logger:        logger,
+		groupInterval: groupInterval,
+	}
+
+	go st.start(ctx)
+
+	return st
+}
+
+func (st *syncTimer) start(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-st.t.C:
+			if wait, err := st.getWaitForNextTick(now); err != nil {
+				// log the error and continue
+				level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
+			} else if wait > 0 {
+				level.Info(st.logger).Log("msg", "next tick in the future, waiting..", "next", wait)
+				st.t.Reset(wait)
+				continue
+			}
+
+			level.Debug(st.logger).Log("msg", "synced flush", "pipeline_time", now)
+
+			st.logFlush(now)
+
+			st.c <- now
+		}
+	}
+}
+
+func (st *syncTimer) getLastSync() (*time.Time, error) {
+	entries, err := st.nflog.Query(
+		nflog.QGroupKey(st.routeKey),
+		nflog.QReceiver(&nflogpb.Receiver{
+			GroupName:   st.routeKey,
+			Integration: st.receiver,
+			Idx:         math.MaxUint32,
+		}),
+	)
+	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
+		return nil, fmt.Errorf("error querying log entry: %w", err)
+	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
+		level.Info(st.logger).Log("msg", "log entry not found")
+		return nil, nil
+	} else if len(entries) > 1 {
+		return nil, fmt.Errorf("unexpected entry result size: %d", len(entries))
+	}
+
+	ft := entries[0].FlushTime
+	if (ft == nil) || (*ft == time.Time{}) {
+		return nil, fmt.Errorf("flush time nil or empty")
+	}
+
+	return entries[0].FlushTime, nil
+}
+
+func (st *syncTimer) getWaitForNextTick(now time.Time) (time.Duration, error) {
+	ft, err := st.getLastSync()
+	if err != nil {
+		return 0, err
+	}
+
+	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
+
+	if next := ft.Add(st.groupInterval); next.After(now) {
+		return next.Sub(now), nil
+	}
+
+	return 0, nil
+}
+
+func (st *syncTimer) Reset(d time.Duration) bool {
+	return st.t.Reset(d)
+}
+
+func (st *syncTimer) Stop() bool {
+	return st.t.Stop()
+}
+
+func (st *syncTimer) GetC() <-chan time.Time {
+	return st.c
+}
+
+func (st *syncTimer) logFlush(now time.Time) {
+	if err := st.nflog.Log(
+		&nflogpb.Receiver{
+			GroupName:   st.routeKey,
+			Integration: st.receiver,
+			Idx:         math.MaxUint32,
+		},
+		st.routeKey,
+		nil,
+		nil,
+		st.groupInterval*2,
+		&now,
+	); err != nil {
+		// log the error and continue
+		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)
+	}
+}
+
 // newAggrGroup returns a new aggregation group.
-func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger) *aggrGroup {
+func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, nflog notify.NotificationLog, syncTimer bool) *aggrGroup {
 	if to == nil {
 		to = func(d time.Duration) time.Duration { return d }
 	}
@@ -449,9 +611,21 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	ag.logger = log.With(logger, "aggrGroup", ag)
 
-	// Set an initial one-time wait before flushing
-	// the first batch of notifications.
-	ag.next = time.NewTimer(ag.opts.GroupWait)
+	if syncTimer {
+		// Set an initial one-time wait before flushing
+		// the first batch of notifications.
+		ag.timer = newSyncTimer(
+			ag.ctx,
+			ag.opts.GroupWait,
+			nflog,
+			ag.GroupKey(),
+			ag.opts.Receiver,
+			ag.logger,
+			ag.opts.GroupInterval,
+		)
+	} else {
+		ag.timer = &standardTimer{time.NewTimer(ag.opts.GroupWait)}
+	}
 
 	return ag
 }
@@ -470,11 +644,11 @@ func (ag *aggrGroup) String() string {
 
 func (ag *aggrGroup) run(nf notifyFunc) {
 	defer close(ag.done)
-	defer ag.next.Stop()
+	defer ag.timer.Stop()
 
 	for {
 		select {
-		case now := <-ag.next.C:
+		case now := <-ag.timer.GetC():
 			// Give the notifications time until the next flush to
 			// finish before terminating them.
 			ctx, cancel := context.WithTimeout(ag.ctx, ag.timeout(ag.opts.GroupInterval))
@@ -495,7 +669,7 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 
 			// Wait the configured interval before calling flush again.
 			ag.mtx.Lock()
-			ag.next.Reset(ag.opts.GroupInterval)
+			ag.timer.Reset(ag.opts.GroupInterval)
 			ag.hasFlushed = true
 			ag.mtx.Unlock()
 
@@ -527,7 +701,7 @@ func (ag *aggrGroup) insert(alert *types.Alert) {
 	ag.mtx.Lock()
 	defer ag.mtx.Unlock()
 	if !ag.hasFlushed && alert.StartsAt.Add(ag.opts.GroupWait).Before(time.Now()) {
-		ag.next.Reset(0)
+		ag.timer.Reset(0)
 	}
 }
 
