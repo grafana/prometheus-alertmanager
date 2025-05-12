@@ -747,6 +747,7 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 
 	needsUpdate, reason := n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval)
 	if !needsUpdate {
+		_ = level.Debug(l).Log("msg", "No need to notify", "aggrGroup", gkey, "receiver", n.recv.GroupName, "integration", n.recv.Integration, "reason", reason, "alerts", alerts)
 		return ctx, nil, nil
 	}
 	// now make sure that the current state is from past
