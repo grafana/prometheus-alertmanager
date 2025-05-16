@@ -475,7 +475,7 @@ type syncTimer struct {
 
 func newSyncTimer(
 	ctx context.Context,
-	groupWait time.Duration,
+	timer *time.Timer,
 	nflog notify.NotificationLog,
 	routeKey string,
 	receiver string,
@@ -483,7 +483,7 @@ func newSyncTimer(
 	groupInterval time.Duration,
 ) *syncTimer {
 	st := &syncTimer{
-		t:             time.NewTimer(groupWait),
+		t:             timer,
 		c:             make(chan time.Time),
 		nflog:         nflog,
 		routeKey:      routeKey,
@@ -502,20 +502,24 @@ func (st *syncTimer) start(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-st.t.C:
-			if wait, err := st.getWaitForNextTick(now); err != nil {
-				// log the error and continue
-				level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
+		case now, ok := <-st.t.C:
+			if !ok { // capture t.Stop()
+				return
+			}
+
+			wait, err := st.getWaitForNextTick(now)
+			if err != nil {
+				if !errors.Is(err, nflog.ErrNotFound) {
+					// log the error and continue
+					level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
+				}
 			} else if wait > 0 {
-				level.Info(st.logger).Log("msg", "next tick in the future, waiting..", "next", wait)
+				level.Debug(st.logger).Log("msg", "next tick in the future, waiting..", "wait", wait)
 				st.t.Reset(wait)
 				continue
 			}
 
-			level.Debug(st.logger).Log("msg", "synced flush", "pipeline_time", now)
-
 			st.logFlush(now)
-
 			st.c <- now
 		}
 	}
@@ -533,14 +537,13 @@ func (st *syncTimer) getLastSync() (*time.Time, error) {
 	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
 		return nil, fmt.Errorf("error querying log entry: %w", err)
 	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
-		level.Info(st.logger).Log("msg", "log entry not found")
-		return nil, nil
+		return nil, nflog.ErrNotFound
 	} else if len(entries) > 1 {
 		return nil, fmt.Errorf("unexpected entry result size: %d", len(entries))
 	}
 
 	ft := entries[0].FlushTime
-	if (ft == nil) || (*ft == time.Time{}) {
+	if ft == nil || ft.Equal(time.Time{}) {
 		return nil, fmt.Errorf("flush time nil or empty")
 	}
 
@@ -609,12 +612,13 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	ag.logger = log.With(logger, "aggrGroup", ag)
 
+	timer := time.NewTimer(ag.opts.GroupWait)
 	if syncTimer {
 		// Set an initial one-time wait before flushing
 		// the first batch of notifications.
 		ag.timer = newSyncTimer(
 			ag.ctx,
-			ag.opts.GroupWait,
+			timer,
 			nflog,
 			ag.GroupKey(),
 			ag.opts.Receiver,
