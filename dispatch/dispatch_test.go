@@ -144,7 +144,7 @@ func TestAggrGroup(t *testing.T) {
 	}
 
 	// Test regular situation where we wait for group_wait to send out alerts.
-	ag := newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), nil, false)
+	ag := newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), nil, 0)
 	go ag.run(ntfy)
 
 	ag.insert(a1)
@@ -198,7 +198,7 @@ func TestAggrGroup(t *testing.T) {
 	// immediate flushing.
 	// Finally, set all alerts to be resolved. After successful notify the aggregation group
 	// should empty itself.
-	ag = newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), nil, false)
+	ag = newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), nil, 0)
 	go ag.run(ntfy)
 
 	ag.insert(a1)
@@ -404,7 +404,7 @@ route:
 
 	timeout := func(d time.Duration) time.Duration { return time.Duration(0) }
 	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
-	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nil, false)
+	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nil, 0)
 	go dispatcher.Run()
 	defer dispatcher.Stop()
 
@@ -544,7 +544,7 @@ route:
 	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
 	lim := limits{groups: 6}
 	m := NewDispatcherMetrics(true, prometheus.NewRegistry())
-	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, lim, logger, m, nil, false)
+	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, lim, logger, m, nil, 0)
 	go dispatcher.Run()
 	defer dispatcher.Stop()
 
@@ -662,7 +662,7 @@ func TestDispatcherRace(t *testing.T) {
 	defer alerts.Close()
 
 	timeout := func(d time.Duration) time.Duration { return time.Duration(0) }
-	dispatcher := NewDispatcher(alerts, nil, nil, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nil, false)
+	dispatcher := NewDispatcher(alerts, nil, nil, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nil, 0)
 	go dispatcher.Run()
 	dispatcher.Stop()
 }
@@ -690,7 +690,7 @@ func TestDispatcherRaceOnFirstAlertNotDeliveredWhenGroupWaitIsZero(t *testing.T)
 
 	timeout := func(d time.Duration) time.Duration { return d }
 	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
-	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nil, false)
+	dispatcher := NewDispatcher(alerts, route, recorder, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nil, 0)
 	go dispatcher.Run()
 	defer dispatcher.Stop()
 
@@ -776,7 +776,7 @@ func TestSyncTimer(t *testing.T) {
 	nfC := make(chan struct{}, n)
 	stage := &pubStage{nfC}
 
-	dispatcher, err := newTestDispatcher(time.Millisecond*10, alerts, stage, marker, logger, nflog, true)
+	dispatcher, err := newTestDispatcher(time.Millisecond*10, alerts, stage, marker, logger, nflog, SyncTimer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -936,17 +936,17 @@ func nflogEntry(opts ...func(*nflogpb.Entry)) *nflogpb.Entry {
 
 func BenchmarkSyncTimer(b *testing.B) {
 	for range b.N {
-		benchTimer(true, b)
+		benchTimer(SyncTimer, b)
 	}
 }
 
 func BenchmarkStdTimer(b *testing.B) {
 	for range b.N {
-		benchTimer(false, b)
+		benchTimer(StandardTimer, b)
 	}
 }
 
-func benchTimer(syncTimer bool, b *testing.B) {
+func benchTimer(timerType timerType, b *testing.B) {
 	b.StopTimer()
 	logger := log.NewNopLogger()
 	marker := types.NewMarker(prometheus.NewRegistry())
@@ -966,7 +966,7 @@ func benchTimer(syncTimer bool, b *testing.B) {
 		queryCalls: []mockQueryCall{},
 	}
 
-	dispatcher, err := newTestDispatcher(time.Minute*1, alerts, stage, marker, logger, nflog, syncTimer)
+	dispatcher, err := newTestDispatcher(time.Minute*1, alerts, stage, marker, logger, nflog, timerType)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1007,7 +1007,7 @@ func newTestDispatcher(
 	marker types.Marker,
 	logger log.Logger,
 	nflog *mockLog,
-	syncTimer bool,
+	timerType timerType,
 ) (*Dispatcher, error) {
 	confData := fmt.Sprintf(`receivers:
 - name: 'testing'
@@ -1026,7 +1026,7 @@ route:
 	route := NewRoute(conf.Route, nil)
 	timeout := func(d time.Duration) time.Duration { return time.Duration(0) }
 
-	return NewDispatcher(alerts, route, stage, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nflog, syncTimer), nil
+	return NewDispatcher(alerts, route, stage, marker, timeout, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), nflog, timerType), nil
 }
 
 type pubStage struct {

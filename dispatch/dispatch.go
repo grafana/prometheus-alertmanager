@@ -104,7 +104,7 @@ type Dispatcher struct {
 
 	nflog notify.NotificationLog
 
-	syncTimer bool
+	timerType timerType
 }
 
 // Limits describes limits used by Dispatcher.
@@ -126,7 +126,7 @@ func NewDispatcher(
 	l log.Logger,
 	m *DispatcherMetrics,
 	nflog notify.NotificationLog,
-	syncTimer bool,
+	timerType timerType,
 ) *Dispatcher {
 	if lim == nil {
 		lim = nilLimits{}
@@ -141,7 +141,7 @@ func NewDispatcher(
 		metrics:   m,
 		limits:    lim,
 		nflog:     nflog,
-		syncTimer: syncTimer,
+		timerType: timerType,
 	}
 	return disp
 }
@@ -371,7 +371,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		return
 	}
 
-	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.nflog, d.syncTimer)
+	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.nflog, d.timerType)
 	routeGroups[fp] = ag
 	d.aggrGroupsNum++
 	d.metrics.aggrGroups.Inc()
@@ -595,8 +595,17 @@ func (st *syncTimer) logFlush(now time.Time) {
 	}
 }
 
+type timerType int
+
+const (
+	timerTypeUnknown timerType = iota
+
+	StandardTimer
+	SyncTimer
+)
+
 // newAggrGroup returns a new aggregation group.
-func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, nflog notify.NotificationLog, syncTimer bool) *aggrGroup {
+func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, nflog notify.NotificationLog, timerType timerType) *aggrGroup {
 	if to == nil {
 		to = func(d time.Duration) time.Duration { return d }
 	}
@@ -613,7 +622,8 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 	ag.logger = log.With(logger, "aggrGroup", ag)
 
 	timer := time.NewTimer(ag.opts.GroupWait)
-	if syncTimer {
+	switch timerType {
+	case SyncTimer:
 		// Set an initial one-time wait before flushing
 		// the first batch of notifications.
 		ag.timer = newSyncTimer(
@@ -625,7 +635,7 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 			ag.logger,
 			ag.opts.GroupInterval,
 		)
-	} else {
+	default:
 		ag.timer = &standardTimer{time.NewTimer(ag.opts.GroupWait)}
 	}
 
