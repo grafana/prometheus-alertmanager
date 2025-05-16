@@ -525,7 +525,7 @@ func (st *syncTimer) start(ctx context.Context) {
 	}
 }
 
-func (st *syncTimer) getLastSync() (*time.Time, error) {
+func (st *syncTimer) getLastFlushTime() (*time.Time, error) {
 	entries, err := st.nflog.Query(
 		nflog.QGroupKey(st.routeKey),
 		nflog.QReceiver(&nflogpb.Receiver{
@@ -551,7 +551,7 @@ func (st *syncTimer) getLastSync() (*time.Time, error) {
 }
 
 func (st *syncTimer) getWaitForNextTick(now time.Time) (time.Duration, error) {
-	ft, err := st.getLastSync()
+	ft, err := st.getLastFlushTime()
 	if err != nil {
 		return 0, err
 	}
