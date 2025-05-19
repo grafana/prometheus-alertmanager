@@ -11,11 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package nflog implements a garbage-collected and snapshottable append-only log of
+// Package flushlog implements a garbage-collected and snapshottable append-only log of
 // active/resolved notifications. Each log entry stores the active/resolved state,
 // the notified receiver, and a hash digest of the notification's identifying contents.
 // The log can be queried along different parameters.
-package nflog
+package flushlog
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/prometheus/alertmanager/cluster"
-	pb "github.com/prometheus/alertmanager/nflog/nflogpb"
+	pb "github.com/prometheus/alertmanager/flushlog/flushlogpb"
 )
 
 // ErrNotFound is returned for empty query results.
@@ -43,39 +43,8 @@ var ErrNotFound = errors.New("not found")
 // ErrInvalidState is returned if the state isn't valid.
 var ErrInvalidState = errors.New("invalid state")
 
-// query currently allows filtering by and/or receiver group key.
-// It is configured via QueryParameter functions.
-//
-// TODO(fabxc): Future versions could allow querying a certain receiver,
-// group or a given time interval.
-type query struct {
-	recv     *pb.Receiver
-	groupKey string
-}
-
-// QueryParam is a function that modifies a query to incorporate
-// a set of parameters. Returns an error for invalid or conflicting
-// parameters.
-type QueryParam func(*query) error
-
-// QReceiver adds a receiver parameter to a query.
-func QReceiver(r *pb.Receiver) QueryParam {
-	return func(q *query) error {
-		q.recv = r
-		return nil
-	}
-}
-
-// QGroupKey adds a group key as querying argument.
-func QGroupKey(gk string) QueryParam {
-	return func(q *query) error {
-		q.groupKey = gk
-		return nil
-	}
-}
-
-// Log holds the notification log state for alerts that have been notified.
-type Log struct {
+// FlushLog holds the flush log state for groups that are active.
+type FlushLog struct {
 	clock clock.Clock
 
 	logger    log.Logger
@@ -89,7 +58,7 @@ type Log struct {
 	broadcast func([]byte)
 }
 
-// MaintenanceFunc represents the function to run as part of the periodic maintenance for the nflog.
+// MaintenanceFunc represents the function to run as part of the periodic maintenance for the flushlog.
 // It returns the size of the snapshot taken or an error if it failed.
 type MaintenanceFunc func() (int64, error)
 
@@ -109,37 +78,37 @@ func newMetrics(r prometheus.Registerer) *metrics {
 	m := &metrics{}
 
 	m.gcDuration = prometheus.NewSummary(prometheus.SummaryOpts{
-		Name:       "alertmanager_nflog_gc_duration_seconds",
+		Name:       "alertmanager_flushlog_gc_duration_seconds",
 		Help:       "Duration of the last notification log garbage collection cycle.",
 		Objectives: map[float64]float64{},
 	})
 	m.snapshotDuration = prometheus.NewSummary(prometheus.SummaryOpts{
-		Name:       "alertmanager_nflog_snapshot_duration_seconds",
+		Name:       "alertmanager_flushlog_snapshot_duration_seconds",
 		Help:       "Duration of the last notification log snapshot.",
 		Objectives: map[float64]float64{},
 	})
 	m.snapshotSize = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "alertmanager_nflog_snapshot_size_bytes",
+		Name: "alertmanager_flushlog_snapshot_size_bytes",
 		Help: "Size of the last notification log snapshot in bytes.",
 	})
 	m.maintenanceTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "alertmanager_nflog_maintenance_total",
+		Name: "alertmanager_flushlog_maintenance_total",
 		Help: "How many maintenances were executed for the notification log.",
 	})
 	m.maintenanceErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "alertmanager_nflog_maintenance_errors_total",
+		Name: "alertmanager_flushlog_maintenance_errors_total",
 		Help: "How many maintenances were executed for the notification log that failed.",
 	})
 	m.queriesTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "alertmanager_nflog_queries_total",
+		Name: "alertmanager_flushlog_queries_total",
 		Help: "Number of notification log queries were received.",
 	})
 	m.queryErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "alertmanager_nflog_query_errors_total",
+		Name: "alertmanager_flushlog_query_errors_total",
 		Help: "Number notification log received queries that failed.",
 	})
 	m.queryDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:                            "alertmanager_nflog_query_duration_seconds",
+		Name:                            "alertmanager_flushlog_query_duration_seconds",
 		Help:                            "Duration of notification log query evaluation.",
 		Buckets:                         prometheus.DefBuckets,
 		NativeHistogramBucketFactor:     1.1,
@@ -147,7 +116,7 @@ func newMetrics(r prometheus.Registerer) *metrics {
 		NativeHistogramMinResetDuration: 1 * time.Hour,
 	})
 	m.propagatedMessagesTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "alertmanager_nflog_gossip_messages_propagated_total",
+		Name: "alertmanager_flushlog_gossip_messages_propagated_total",
 		Help: "Number of received gossip messages that have been further gossiped.",
 	})
 
@@ -167,7 +136,7 @@ func newMetrics(r prometheus.Registerer) *metrics {
 	return m
 }
 
-type state map[string]*pb.MeshEntry
+type state map[uint64]*pb.MeshFlushLog
 
 func (s state) clone() state {
 	c := make(state, len(s))
@@ -177,17 +146,16 @@ func (s state) clone() state {
 	return c
 }
 
-// merge returns true or false whether the MeshEntry was merged or
+// merge returns true or false whether the MeshFlushLog was merged or
 // not. This information is used to decide to gossip the message further.
-func (s state) merge(e *pb.MeshEntry, now time.Time) bool {
+func (s state) merge(e *pb.MeshFlushLog, now time.Time) bool {
 	if e.ExpiresAt.Before(now) {
 		return false
 	}
-	k := stateKey(string(e.Entry.GroupKey), e.Entry.Receiver)
 
-	prev, ok := s[k]
-	if !ok || prev.Entry.Timestamp.Before(e.Entry.Timestamp) {
-		s[k] = e
+	prev, ok := s[e.FlushLog.GroupFingerprint]
+	if !ok || prev.FlushLog.Timestamp.Before(e.FlushLog.Timestamp) {
+		s[e.FlushLog.GroupFingerprint] = e
 		return true
 	}
 	return false
@@ -207,13 +175,13 @@ func (s state) MarshalBinary() ([]byte, error) {
 func decodeState(r io.Reader) (state, error) {
 	st := state{}
 	for {
-		var e pb.MeshEntry
+		var e pb.MeshFlushLog
 		_, err := pbutil.ReadDelimited(r, &e)
 		if err == nil {
-			if e.Entry == nil || e.Entry.Receiver == nil {
+			if e.FlushLog == nil || e.FlushLog.GroupFingerprint == 0 || e.FlushLog.Timestamp.Equal(time.Time{}) {
 				return nil, ErrInvalidState
 			}
-			st[stateKey(string(e.Entry.GroupKey), e.Entry.Receiver)] = &e
+			st[e.FlushLog.GroupFingerprint] = &e
 			continue
 		}
 		if errors.Is(err, io.EOF) {
@@ -224,7 +192,7 @@ func decodeState(r io.Reader) (state, error) {
 	return st, nil
 }
 
-func marshalMeshEntry(e *pb.MeshEntry) ([]byte, error) {
+func marshalMeshFlushLog(e *pb.MeshFlushLog) ([]byte, error) {
 	var buf bytes.Buffer
 	if _, err := pbutil.WriteDelimited(&buf, e); err != nil {
 		return nil, err
@@ -251,16 +219,15 @@ func (o *Options) validate() error {
 	return nil
 }
 
-// New creates a new notification log based on the provided options.
+// New creates a new flush log based on the provided options.
 // The snapshot is loaded into the Log if it is set.
-func New(o Options) (*Log, error) {
+func New(o Options) (*FlushLog, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
 	}
 
-	l := &Log{
-		clock:     clock.New(),
-		retention: o.Retention,
+	l := &FlushLog{
+		retention: time.Hour * 1,
 		logger:    log.NewNopLogger(),
 		st:        state{},
 		broadcast: func([]byte) {},
@@ -269,6 +236,10 @@ func New(o Options) (*Log, error) {
 
 	if o.Logger != nil {
 		l.logger = o.Logger
+	}
+
+	if o.Retention != 0 {
+		l.retention = o.Retention
 	}
 
 	if o.SnapshotFile != "" {
@@ -292,7 +263,7 @@ func New(o Options) (*Log, error) {
 	return l, nil
 }
 
-func (l *Log) now() time.Time {
+func (l *FlushLog) now() time.Time {
 	return l.clock.Now()
 }
 
@@ -300,7 +271,7 @@ func (l *Log) now() time.Time {
 // file is set, a snapshot is written to it afterwards.
 // Terminates on receiving from stopc.
 // If not nil, the last argument is an override for what to do as part of the maintenance - for advanced usage.
-func (l *Log) Maintenance(interval time.Duration, snapf string, stopc <-chan struct{}, override MaintenanceFunc) {
+func (l *FlushLog) Maintenance(interval time.Duration, snapf string, stopc <-chan struct{}, override MaintenanceFunc) {
 	if interval == 0 || stopc == nil {
 		level.Error(l.logger).Log("msg", "interval or stop signal are missing - not running maintenance")
 		return
@@ -367,49 +338,27 @@ Loop:
 	}
 }
 
-func receiverKey(r *pb.Receiver) string {
-	return fmt.Sprintf("%s/%s/%d", r.GroupName, r.Integration, r.Idx)
-}
-
-// stateKey returns a string key for a log entry consisting of the group key
-// and receiver.
-func stateKey(k string, r *pb.Receiver) string {
-	return fmt.Sprintf("%s:%s", k, receiverKey(r))
-}
-
-func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, flushTime *time.Time) error {
-	// Write all st with the same timestamp.
-	now := l.now()
-	key := stateKey(gkey, r)
-
+func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	if prevle, ok := l.st[key]; ok {
-		// Entry already exists, only overwrite if timestamp is newer.
+	if prevle, ok := l.st[groupFingerprint]; ok {
+		// FlushLog already exists, only overwrite if timestamp is newer.
 		// This may happen with raciness or clock-drift across AM nodes.
-		if prevle.Entry.Timestamp.After(now) {
+		if prevle.FlushLog.Timestamp.After(flushTime) {
 			return nil
 		}
 	}
 
-	expiresAt := now.Add(l.retention)
-	if expiry > 0 && l.retention > expiry {
-		expiresAt = now.Add(expiry)
-	}
-
-	e := &pb.MeshEntry{
-		Entry: &pb.Entry{
-			Receiver:       r,
-			GroupKey:       []byte(gkey),
-			Timestamp:      now,
-			FiringAlerts:   firingAlerts,
-			ResolvedAlerts: resolvedAlerts,
+	e := &pb.MeshFlushLog{
+		FlushLog: &pb.FlushLog{
+			GroupFingerprint: uint64(groupFingerprint),
+			Timestamp:        flushTime,
 		},
-		ExpiresAt: expiresAt,
+		ExpiresAt: flushTime.Add(l.retention),
 	}
 
-	b, err := marshalMeshEntry(e)
+	b, err := marshalMeshFlushLog(e)
 	if err != nil {
 		return err
 	}
@@ -420,7 +369,7 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 }
 
 // GC implements the Log interface.
-func (l *Log) GC() (int, error) {
+func (l *FlushLog) GC() (int, error) {
 	start := time.Now()
 	defer func() { l.metrics.gcDuration.Observe(time.Since(start).Seconds()) }()
 
@@ -444,30 +393,21 @@ func (l *Log) GC() (int, error) {
 }
 
 // Query implements the Log interface.
-func (l *Log) Query(params ...QueryParam) ([]*pb.Entry, error) {
+func (l *FlushLog) Query(groupFingerprint uint64) ([]*pb.FlushLog, error) {
 	start := time.Now()
 	l.metrics.queriesTotal.Inc()
 
-	entries, err := func() ([]*pb.Entry, error) {
-		q := &query{}
-		for _, p := range params {
-			if err := p(q); err != nil {
-				return nil, err
-			}
-		}
-		// TODO(fabxc): For now our only query mode is the most recent entry for a
+	entries, err := func() ([]*pb.FlushLog, error) {
 		// receiver/group_key combination.
-		if q.recv == nil || q.groupKey == "" {
-			// TODO(fabxc): allow more complex queries in the future.
-			// How to enable pagination?
+		if groupFingerprint == 0 {
 			return nil, errors.New("no query parameters specified")
 		}
 
 		l.mtx.RLock()
 		defer l.mtx.RUnlock()
 
-		if le, ok := l.st[stateKey(q.groupKey, q.recv)]; ok {
-			return []*pb.Entry{le.Entry}, nil
+		if le, ok := l.st[groupFingerprint]; ok {
+			return []*pb.FlushLog{le.FlushLog}, nil
 		}
 		return nil, ErrNotFound
 	}()
@@ -479,7 +419,7 @@ func (l *Log) Query(params ...QueryParam) ([]*pb.Entry, error) {
 }
 
 // loadSnapshot loads a snapshot generated by Snapshot() into the state.
-func (l *Log) loadSnapshot(r io.Reader) error {
+func (l *FlushLog) loadSnapshot(r io.Reader) error {
 	st, err := decodeState(r)
 	if err != nil {
 		return err
@@ -493,7 +433,7 @@ func (l *Log) loadSnapshot(r io.Reader) error {
 }
 
 // Snapshot implements the Log interface.
-func (l *Log) Snapshot(w io.Writer) (int64, error) {
+func (l *FlushLog) Snapshot(w io.Writer) (int64, error) {
 	start := time.Now()
 	defer func() { l.metrics.snapshotDuration.Observe(time.Since(start).Seconds()) }()
 
@@ -509,7 +449,7 @@ func (l *Log) Snapshot(w io.Writer) (int64, error) {
 }
 
 // MarshalBinary serializes all contents of the notification log.
-func (l *Log) MarshalBinary() ([]byte, error) {
+func (l *FlushLog) MarshalBinary() ([]byte, error) {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
@@ -517,7 +457,7 @@ func (l *Log) MarshalBinary() ([]byte, error) {
 }
 
 // Merge merges notification log state received from the cluster with the local state.
-func (l *Log) Merge(b []byte) error {
+func (l *FlushLog) Merge(b []byte) error {
 	st, err := decodeState(bytes.NewReader(b))
 	if err != nil {
 		return err
@@ -542,7 +482,7 @@ func (l *Log) Merge(b []byte) error {
 
 // SetBroadcast sets a broadcast callback that will be invoked with serialized state
 // on updates.
-func (l *Log) SetBroadcast(f func([]byte)) {
+func (l *FlushLog) SetBroadcast(f func([]byte)) {
 	l.mtx.Lock()
 	l.broadcast = f
 	l.mtx.Unlock()

@@ -18,15 +18,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-kit/log"
-	"github.com/prometheus/alertmanager/nflog"
-	"github.com/prometheus/alertmanager/nflog/nflogpb"
+	"github.com/prometheus/alertmanager/flushlog"
+	"github.com/prometheus/alertmanager/flushlog/flushlogpb"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
@@ -48,40 +47,46 @@ func TestSyncTimer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer alerts.Close()
-	expRcv := &nflogpb.Receiver{
-		GroupName:   "{}:{alertname=\"TestingAlert\"}",
-		Integration: "testing",
-		Idx:         math.MaxUint32,
-	}
-
-	nflog := &mockLog{
+	flushlog := &mockLog{
 		t: t,
 		logCalls: []mockLogCall{
 			{
-				expRcv:  expRcv,
-				expGKey: "{}:{alertname=\"TestingAlert\"}",
+				expGroupFingerprint: 13705263069144098434,
 			},
 			{
-				expRcv:  expRcv,
-				expGKey: "{}:{alertname=\"TestingAlert\"}",
+				expGroupFingerprint: 13705263069144098434,
 			},
 			{
-				expRcv:  expRcv,
-				expGKey: "{}:{alertname=\"TestingAlert\"}",
+				expGroupFingerprint: 13705263069144098434,
 			},
 		},
 		queryCalls: []mockQueryCall{
 			{ // first call to query doesn't find state
-				err: nflog.ErrNotFound,
+				err: flushlog.ErrNotFound,
 			},
 			{
-				res: []*nflogpb.Entry{nflogEntry(withFlushTime(now))},
+				res: []*flushlogpb.FlushLog{
+					{
+						GroupFingerprint: 0,
+						Timestamp:        now,
+					},
+				},
 			},
 			{
-				res: []*nflogpb.Entry{nflogEntry(withFlushTime(now.Add(time.Millisecond * 80)))},
+				res: []*flushlogpb.FlushLog{
+					{
+						GroupFingerprint: 0,
+						Timestamp:        now.Add(time.Millisecond * 80),
+					},
+				},
 			},
 			{
-				res: []*nflogpb.Entry{nflogEntry(withFlushTime(now.Add(time.Millisecond * 80)))},
+				res: []*flushlogpb.FlushLog{
+					{
+						GroupFingerprint: 0,
+						Timestamp:        now.Add(time.Millisecond * 80),
+					},
+				},
 			},
 		},
 	}
@@ -91,7 +96,7 @@ func TestSyncTimer(t *testing.T) {
 	nfC := make(chan struct{}, n)
 	stage := &pubStage{nfC}
 
-	dispatcher, err := newTestDispatcher(time.Millisecond*10, alerts, stage, marker, logger, NewSyncTimerFactory(nflog))
+	dispatcher, err := newTestDispatcher(time.Millisecond*10, alerts, stage, marker, logger, NewSyncTimerFactory(flushlog))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +113,8 @@ func TestSyncTimer(t *testing.T) {
 			if i == n {
 				dispatcher.Stop() // ensure we stop the dispatcher before making assertions to mitigate flakiness
 
-				nflog.requireCalls() // make sure the call stacks are empty
-				buf.requireLogs(     // require the logs in order
+				flushlog.requireCalls() // make sure the call stacks are empty
+				buf.requireLogs(        // require the logs in order
 					"Received alert",
 					// flush ticks
 					"flushing",                           // 1. no entry found, so no more logs
@@ -138,15 +143,21 @@ type mockLog struct {
 }
 
 type mockQueryCall struct {
-	res []*nflogpb.Entry
+	expGroupFingerprint uint64
+
+	res []*flushlogpb.FlushLog
 	err error
 }
 
-func (m *mockLog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
+func (m *mockLog) Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error) {
 	if m.bench {
 		// we want to measure the impact of the extra go routine in the sync timer, so always return a time in the past
-		t := time.Now().Add(-time.Minute * 10)
-		return []*nflogpb.Entry{{FlushTime: &t}}, nil
+		return []*flushlogpb.FlushLog{
+			{
+				GroupFingerprint: groupFingerprint,
+				Timestamp:        time.Now().Add(-time.Minute * 10),
+			},
+		}, nil
 	}
 
 	var c mockQueryCall
@@ -164,12 +175,11 @@ func (m *mockLog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
 }
 
 type mockLogCall struct {
-	expRcv  *nflogpb.Receiver
-	expGKey string
-	err     error
+	expGroupFingerprint uint64
+	err                 error
 }
 
-func (m *mockLog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, flushTime *time.Time) error {
+func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time) error {
 	if m.bench {
 		return nil
 	}
@@ -185,8 +195,7 @@ func (m *mockLog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAl
 		m.logCalls = m.logCalls[1:]
 	}()
 
-	require.Equal(m.t, c.expRcv, r)
-	require.Equal(m.t, c.expGKey, gkey)
+	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
 
 	return c.err
 }
@@ -218,9 +227,13 @@ func (pb *logBuf) Write(b []byte) (int, error) {
 
 	var l struct {
 		Msg string `json:"msg"`
+		Err string `json:"err,omitempty"`
 	}
 	if err := json.Unmarshal(b, &l); err != nil {
 		return 0, err
+	}
+	if l.Err != "" {
+		fmt.Println("error in log:", l.Err)
 	}
 
 	pb.b = append(pb.b, l.Msg)
@@ -231,22 +244,6 @@ func (pb *logBuf) requireLogs(expLogs ...string) {
 	pb.m.Lock()
 	defer pb.m.Unlock()
 	require.Equal(pb.t, expLogs, pb.b)
-}
-
-func withFlushTime(t time.Time) func(*nflogpb.Entry) {
-	return func(e *nflogpb.Entry) {
-		e.FlushTime = &t
-	}
-}
-
-func nflogEntry(opts ...func(*nflogpb.Entry)) *nflogpb.Entry {
-	e := &nflogpb.Entry{}
-
-	for _, opt := range opts {
-		opt(e)
-	}
-
-	return e
 }
 
 func BenchmarkSyncTimer(b *testing.B) {
@@ -275,13 +272,13 @@ func benchTimer(timerFactoryBuilder func(*mockLog) TimerFactory, b *testing.B) {
 	nfC := make(chan struct{}, n)
 	stage := &pubStage{nfC}
 
-	nflog := &mockLog{
+	flushlog := &mockLog{
 		bench:      true,
 		logCalls:   []mockLogCall{},
 		queryCalls: []mockQueryCall{},
 	}
 
-	dispatcher, err := newTestDispatcher(time.Minute*1, alerts, stage, marker, logger, timerFactoryBuilder(nflog))
+	dispatcher, err := newTestDispatcher(time.Minute*1, alerts, stage, marker, logger, timerFactoryBuilder(flushlog))
 	if err != nil {
 		b.Fatal(err)
 	}

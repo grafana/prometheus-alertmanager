@@ -17,34 +17,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/prometheus/alertmanager/nflog"
-	"github.com/prometheus/alertmanager/nflog/nflogpb"
-	"github.com/prometheus/alertmanager/notify"
+	"github.com/prometheus/alertmanager/flushlog"
+	"github.com/prometheus/alertmanager/flushlog/flushlogpb"
 )
 
-type (
-	TimerFactory func(
-		context.Context,
-		*time.Timer,
-		log.Logger,
-		string, // routeKey
-		string, // receiver
-		time.Duration, // groupInterval
-	) Timer
-)
+// TimerFactory is a function that creates a timer.
+type TimerFactory func(context.Context, *time.Timer, log.Logger, time.Duration, uint64) Timer
 
 func standardTimerFactory(
 	_ context.Context,
 	t *time.Timer,
 	_ log.Logger,
-	_ string,
-	_ string,
 	_ time.Duration,
+	_ uint64,
 ) Timer {
 	return &standardTimer{t}
 }
@@ -72,34 +61,36 @@ func (sat *standardTimer) Stop() bool {
 }
 
 type syncTimer struct {
-	c             chan time.Time
-	t             *time.Timer
-	nflog         notify.NotificationLog
-	routeKey      string
-	receiver      string
-	logger        log.Logger
-	groupInterval time.Duration
+	c                chan time.Time
+	t                *time.Timer
+	flushLog         FlushLog
+	logger           log.Logger
+	groupFingerprint uint64
+	groupInterval    time.Duration
+}
+
+type FlushLog interface {
+	Log(groupFingerprint uint64, flushTime time.Time) error
+	Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error)
 }
 
 func NewSyncTimerFactory(
-	nflog notify.NotificationLog,
+	flushLog FlushLog,
 ) TimerFactory {
 	return func(
 		ctx context.Context,
 		t *time.Timer,
 		l log.Logger,
-		routeKey string,
-		receiver string,
 		groupInterval time.Duration,
+		groupFingerprint uint64,
 	) Timer {
 		st := &syncTimer{
-			t:             t,
-			c:             make(chan time.Time),
-			nflog:         nflog,
-			routeKey:      routeKey,
-			receiver:      receiver,
-			logger:        l,
-			groupInterval: groupInterval,
+			t:                t,
+			c:                make(chan time.Time),
+			flushLog:         flushLog,
+			logger:           l,
+			groupInterval:    groupInterval,
+			groupFingerprint: groupFingerprint,
 		}
 
 		go st.start(ctx)
@@ -122,7 +113,7 @@ func (st *syncTimer) start(ctx context.Context) {
 
 			wait, err := st.getWaitForNextTick(now)
 			if err != nil {
-				if !errors.Is(err, nflog.ErrNotFound) {
+				if !errors.Is(err, flushlog.ErrNotFound) {
 					// log the error and continue
 					level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
 				}
@@ -139,28 +130,21 @@ func (st *syncTimer) start(ctx context.Context) {
 }
 
 func (st *syncTimer) getLastFlushTime() (*time.Time, error) {
-	entries, err := st.nflog.Query(
-		nflog.QGroupKey(st.routeKey),
-		nflog.QReceiver(&nflogpb.Receiver{
-			GroupName:   st.routeKey,
-			Integration: st.receiver,
-			Idx:         math.MaxUint32,
-		}),
-	)
-	if err != nil && !errors.Is(err, nflog.ErrNotFound) {
+	entries, err := st.flushLog.Query(st.groupFingerprint)
+	if err != nil && !errors.Is(err, flushlog.ErrNotFound) {
 		return nil, fmt.Errorf("error querying log entry: %w", err)
-	} else if errors.Is(err, nflog.ErrNotFound) || len(entries) == 0 {
-		return nil, nflog.ErrNotFound
+	} else if errors.Is(err, flushlog.ErrNotFound) || len(entries) == 0 {
+		return nil, flushlog.ErrNotFound
 	} else if len(entries) > 1 {
 		return nil, fmt.Errorf("unexpected entry result size: %d", len(entries))
 	}
 
-	ft := entries[0].FlushTime
-	if ft == nil || ft.Equal(time.Time{}) {
+	ft := entries[0].Timestamp
+	if ft.Equal(time.Time{}) {
 		return nil, fmt.Errorf("flush time nil or empty")
 	}
 
-	return entries[0].FlushTime, nil
+	return &ft, nil
 }
 
 func (st *syncTimer) getWaitForNextTick(now time.Time) (time.Duration, error) {
@@ -191,17 +175,9 @@ func (st *syncTimer) C() <-chan time.Time {
 }
 
 func (st *syncTimer) logFlush(now time.Time) {
-	if err := st.nflog.Log(
-		&nflogpb.Receiver{
-			GroupName:   st.routeKey,
-			Integration: st.receiver,
-			Idx:         math.MaxUint32,
-		},
-		st.routeKey,
-		nil,
-		nil,
-		st.groupInterval*2,
-		&now,
+	if err := st.flushLog.Log(
+		st.groupFingerprint,
+		now,
 	); err != nil {
 		// log the error and continue
 		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)
