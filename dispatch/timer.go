@@ -109,6 +109,8 @@ func NewSyncTimerFactory(
 }
 
 func (st *syncTimer) start(ctx context.Context) {
+	defer close(st.c)
+
 	for {
 		select {
 		case <-ctx.Done():
