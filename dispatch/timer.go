@@ -50,7 +50,7 @@ func standardTimerFactory(
 }
 
 type Timer interface {
-	GetC() <-chan time.Time
+	C() <-chan time.Time
 	Reset(d time.Duration) bool
 	Stop() bool
 }
@@ -59,7 +59,7 @@ type standardTimer struct {
 	t *time.Timer
 }
 
-func (sat *standardTimer) GetC() <-chan time.Time {
+func (sat *standardTimer) C() <-chan time.Time {
 	return sat.t.C
 }
 
@@ -184,7 +184,7 @@ func (st *syncTimer) Stop() bool {
 	return st.t.Stop()
 }
 
-func (st *syncTimer) GetC() <-chan time.Time {
+func (st *syncTimer) C() <-chan time.Time {
 	return st.c
 }
 
