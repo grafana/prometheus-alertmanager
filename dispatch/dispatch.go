@@ -454,7 +454,6 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 		done:     make(chan struct{}),
 	}
 	ag.ctx, ag.cancel = context.WithCancel(ctx)
-	labels.Fingerprint()
 
 	ag.logger = log.With(logger, "aggrGroup", ag)
 
