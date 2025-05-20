@@ -27,18 +27,26 @@ import (
 )
 
 // TimerFactory is a function that creates a timer.
-type TimerFactory func(context.Context, *time.Timer, log.Logger, time.Duration, uint64) Timer
+type TimerFactory func(
+	context.Context,
+	*RouteOpts,
+	log.Logger,
+	uint64,
+) Timer
 
 func standardTimerFactory(
 	_ context.Context,
-	t *time.Timer,
+	o *RouteOpts,
 	_ log.Logger,
-	groupInterval time.Duration,
 	_ uint64,
 ) Timer {
-	return &standardTimer{t, groupInterval}
+	return &standardTimer{
+		time.NewTimer(o.GroupWait),
+		o.GroupInterval,
+	}
 }
 
+// Timer is the interface for the dispatcher timer.
 type Timer interface {
 	C() <-chan time.Time
 	Reset(time.Time) bool
@@ -86,16 +94,15 @@ func NewSyncTimerFactory(
 ) TimerFactory {
 	return func(
 		ctx context.Context,
-		t *time.Timer,
+		o *RouteOpts,
 		l log.Logger,
-		groupInterval time.Duration,
 		groupFingerprint uint64,
 	) Timer {
 		st := &syncTimer{
-			t:                t,
+			t:                time.NewTimer(o.GroupWait),
 			flushLog:         flushLog,
 			logger:           l,
-			groupInterval:    groupInterval,
+			groupInterval:    o.GroupInterval,
 			groupFingerprint: groupFingerprint,
 		}
 
@@ -129,7 +136,7 @@ func (st *syncTimer) getNextTick(now time.Time) (time.Duration, error) {
 
 	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
 
-	interval := time.Duration(st.calcFlushIteration(*ft, now)) * st.groupInterval
+	interval := time.Duration(st.nextFlushIteration(*ft, now)) * st.groupInterval
 	if next := ft.Add(interval); next.After(now) {
 		return next.Sub(now), nil
 	}
@@ -174,7 +181,7 @@ func (st *syncTimer) logFlush(now time.Time) {
 	}
 }
 
-func (st *syncTimer) calcFlushIteration(firstFlush, now time.Time) int64 {
+func (st *syncTimer) nextFlushIteration(firstFlush, now time.Time) int64 {
 	// convert it all to seconds
 	ns := now.Unix()
 	fs := firstFlush.Unix()
