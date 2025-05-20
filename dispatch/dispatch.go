@@ -461,9 +461,8 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 	// the first batch of notifications.
 	ag.timer = timerFactory(
 		ag.ctx,
-		time.NewTimer(ag.opts.GroupWait),
+		ag.opts,
 		ag.logger,
-		ag.opts.GroupInterval,
 		uint64(ag.fingerprint()),
 	)
 
