@@ -368,6 +368,20 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time) error {
 	return nil
 }
 
+// Delete removes the entry for the given group fingerprint from the log.
+func (l *FlushLog) Delete(groupFingerprint uint64) error {
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
+
+	if _, ok := l.st[groupFingerprint]; !ok {
+		return ErrNotFound
+	}
+
+	delete(l.st, groupFingerprint)
+
+	return nil
+}
+
 // GC implements the Log interface.
 func (l *FlushLog) GC() (int, error) {
 	start := time.Now()
