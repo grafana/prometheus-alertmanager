@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/go-kit/log"
@@ -32,28 +33,34 @@ func standardTimerFactory(
 	_ context.Context,
 	t *time.Timer,
 	_ log.Logger,
-	_ time.Duration,
+	groupInterval time.Duration,
 	_ uint64,
 ) Timer {
-	return &standardTimer{t}
+	return &standardTimer{t, groupInterval}
 }
 
 type Timer interface {
 	C() <-chan time.Time
-	Reset(d time.Duration) bool
+	Reset(time.Time) bool
 	Stop() bool
+	Flush() bool
 }
 
 type standardTimer struct {
-	t *time.Timer
+	t             *time.Timer
+	groupInterval time.Duration
 }
 
 func (sat *standardTimer) C() <-chan time.Time {
 	return sat.t.C
 }
 
-func (sat *standardTimer) Reset(d time.Duration) bool {
-	return sat.t.Reset(d)
+func (sat *standardTimer) Reset(_ time.Time) bool {
+	return sat.t.Reset(sat.groupInterval)
+}
+
+func (sat *standardTimer) Flush() bool {
+	return sat.t.Reset(0)
 }
 
 func (sat *standardTimer) Stop() bool {
@@ -61,7 +68,6 @@ func (sat *standardTimer) Stop() bool {
 }
 
 type syncTimer struct {
-	c                chan time.Time
 	t                *time.Timer
 	flushLog         FlushLog
 	logger           log.Logger
@@ -72,6 +78,7 @@ type syncTimer struct {
 type FlushLog interface {
 	Log(groupFingerprint uint64, flushTime time.Time) error
 	Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error)
+	Delete(groupFingerprint uint64) error
 }
 
 func NewSyncTimerFactory(
@@ -86,50 +93,17 @@ func NewSyncTimerFactory(
 	) Timer {
 		st := &syncTimer{
 			t:                t,
-			c:                make(chan time.Time),
 			flushLog:         flushLog,
 			logger:           l,
 			groupInterval:    groupInterval,
 			groupFingerprint: groupFingerprint,
 		}
 
-		go st.start(ctx)
-
 		return st
 	}
 }
 
-func (st *syncTimer) start(ctx context.Context) {
-	defer close(st.c)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case now, ok := <-st.t.C:
-			if !ok { // capture t.Stop()
-				return
-			}
-
-			wait, err := st.getWaitForNextTick(now)
-			if err != nil {
-				if !errors.Is(err, flushlog.ErrNotFound) {
-					// log the error and continue
-					level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
-				}
-			} else if wait > 0 {
-				level.Debug(st.logger).Log("msg", "next tick in the future, waiting..", "wait", wait)
-				st.t.Reset(wait)
-				continue
-			}
-
-			st.logFlush(now)
-			st.c <- now
-		}
-	}
-}
-
-func (st *syncTimer) getLastFlushTime() (*time.Time, error) {
+func (st *syncTimer) getFirstFlushTime() (*time.Time, error) {
 	entries, err := st.flushLog.Query(st.groupFingerprint)
 	if err != nil && !errors.Is(err, flushlog.ErrNotFound) {
 		return nil, fmt.Errorf("error querying log entry: %w", err)
@@ -147,31 +121,47 @@ func (st *syncTimer) getLastFlushTime() (*time.Time, error) {
 	return &ft, nil
 }
 
-func (st *syncTimer) getWaitForNextTick(now time.Time) (time.Duration, error) {
-	ft, err := st.getLastFlushTime()
+func (st *syncTimer) getNextTick(now time.Time) (time.Duration, error) {
+	ft, err := st.getFirstFlushTime()
 	if err != nil {
-		return 0, err
+		return st.groupInterval, err
 	}
 
 	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
 
-	if next := ft.Add(st.groupInterval); next.After(now) {
+	interval := time.Duration(st.calcFlushIteration(*ft, now)) * st.groupInterval
+	if next := ft.Add(interval); next.After(now) {
 		return next.Sub(now), nil
 	}
 
-	return 0, nil
+	return st.groupInterval, nil
 }
 
-func (st *syncTimer) Reset(d time.Duration) bool {
-	return st.t.Reset(d)
+func (st *syncTimer) Reset(now time.Time) bool {
+	reset, err := st.getNextTick(now)
+	if err != nil {
+		if errors.Is(err, flushlog.ErrNotFound) {
+			st.logFlush(now)
+		} else {
+			level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
+		}
+	}
+
+	level.Debug(st.logger).Log("msg", "calculated next tick", "reset", reset)
+	return st.t.Reset(reset)
+}
+
+func (st *syncTimer) Flush() bool {
+	return st.t.Reset(0)
 }
 
 func (st *syncTimer) Stop() bool {
+	st.flushLog.Delete(st.groupFingerprint)
 	return st.t.Stop()
 }
 
 func (st *syncTimer) C() <-chan time.Time {
-	return st.c
+	return st.t.C
 }
 
 func (st *syncTimer) logFlush(now time.Time) {
@@ -182,4 +172,13 @@ func (st *syncTimer) logFlush(now time.Time) {
 		// log the error and continue
 		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)
 	}
+}
+
+func (st *syncTimer) calcFlushIteration(firstFlush, now time.Time) int64 {
+	// convert it all to seconds
+	ns := now.Unix()
+	fs := firstFlush.Unix()
+	gs := st.groupInterval.Seconds()
+
+	return int64(math.Ceil(float64(ns-fs) / gs))
 }
