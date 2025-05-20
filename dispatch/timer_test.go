@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
 	"sync"
 	"testing"
@@ -53,12 +52,6 @@ func TestSyncTimer(t *testing.T) {
 			{
 				expGroupFingerprint: 13705263069144098434,
 			},
-			{
-				expGroupFingerprint: 13705263069144098434,
-			},
-			{
-				expGroupFingerprint: 13705263069144098434,
-			},
 		},
 		queryCalls: []mockQueryCall{
 			{ // first call to query doesn't find state
@@ -67,7 +60,7 @@ func TestSyncTimer(t *testing.T) {
 			{
 				res: []*flushlogpb.FlushLog{
 					{
-						GroupFingerprint: 0,
+						GroupFingerprint: 13705263069144098434,
 						Timestamp:        now,
 					},
 				},
@@ -75,18 +68,16 @@ func TestSyncTimer(t *testing.T) {
 			{
 				res: []*flushlogpb.FlushLog{
 					{
-						GroupFingerprint: 0,
+						GroupFingerprint: 13705263069144098434,
 						Timestamp:        now.Add(time.Millisecond * 80),
 					},
 				},
 			},
+		},
+		deleteCalls: []mockDeleteCall{
 			{
-				res: []*flushlogpb.FlushLog{
-					{
-						GroupFingerprint: 0,
-						Timestamp:        now.Add(time.Millisecond * 80),
-					},
-				},
+				expGroupFingerprint: 13705263069144098434,
+				err:                 nil,
 			},
 		},
 	}
@@ -117,13 +108,14 @@ func TestSyncTimer(t *testing.T) {
 				buf.requireLogs(        // require the logs in order
 					"Received alert",
 					// flush ticks
-					"flushing",                           // 1. no entry found, so no more logs
-					"found flush log entry",              // 2. finds an entry from the past, so flushes immediately
-					"flushing",                           // 2.1. logs the flush
-					"found flush log entry",              // 3. finds an entry from the future
-					"next tick in the future, waiting..", // 3.1. entry is in the future, so reset the timer to next-now
-					"found flush log entry",              // 3.2. ticks again after waiting, finds the entry
-					"flushing",                           // 3.3. now is equal or smaller than the entry this time, so flushes
+					"calculated next tick",  // 1.1. doesn't find an entry (no logs)
+					"flushing",              // 1.2. logs the flush
+					"found flush log entry", // 2.1. finds an entry, so calculates next tick
+					"calculated next tick",  // 2.2. finds an entry from the past, so flushes immediately
+					"flushing",              // 2.3. logs the flush
+					"found flush log entry", // 3.1. finds an entry, so calculates next tick
+					"calculated next tick",  // 3.2. calculates next tick
+					"flushing",              // 3.3. flushes the entry
 				)
 				return
 			}
@@ -137,9 +129,10 @@ type mockLog struct {
 	t     *testing.T
 	bench bool
 
-	mtx        sync.Mutex
-	queryCalls []mockQueryCall
-	logCalls   []mockLogCall
+	mtx         sync.Mutex
+	queryCalls  []mockQueryCall
+	logCalls    []mockLogCall
+	deleteCalls []mockDeleteCall
 }
 
 type mockQueryCall struct {
@@ -200,12 +193,30 @@ func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time) error {
 	return c.err
 }
 
-func (l *mockLog) GC() (int, error) {
-	return 0, nil
+type mockDeleteCall struct {
+	expGroupFingerprint uint64
+	err                 error
 }
 
-func (l *mockLog) Snapshot(w io.Writer) (int, error) {
-	return 0, nil
+func (m *mockLog) Delete(groupFingerprint uint64) error {
+	if m.bench {
+		return nil
+	}
+
+	var c mockDeleteCall
+	func() {
+		m.mtx.Lock()
+		defer m.mtx.Unlock()
+		if len(m.deleteCalls) == 0 {
+			require.FailNow(m.t, "no delete calls")
+		}
+		c = m.deleteCalls[0]
+		m.deleteCalls = m.deleteCalls[1:]
+	}()
+
+	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
+
+	return c.err
 }
 
 func (m *mockLog) requireCalls() {
@@ -213,6 +224,7 @@ func (m *mockLog) requireCalls() {
 	defer m.mtx.Unlock()
 	require.Len(m.t, m.queryCalls, 0)
 	require.Len(m.t, m.logCalls, 0)
+	require.Len(m.t, m.deleteCalls, 0)
 }
 
 type logBuf struct {

@@ -510,7 +510,7 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 
 			// Wait the configured interval before calling flush again.
 			ag.mtx.Lock()
-			ag.timer.Reset(ag.opts.GroupInterval)
+			ag.timer.Reset(now)
 			ag.hasFlushed = true
 			ag.mtx.Unlock()
 
@@ -542,7 +542,7 @@ func (ag *aggrGroup) insert(alert *types.Alert) {
 	ag.mtx.Lock()
 	defer ag.mtx.Unlock()
 	if !ag.hasFlushed && alert.StartsAt.Add(ag.opts.GroupWait).Before(time.Now()) {
-		ag.timer.Reset(0)
+		ag.timer.Flush()
 	}
 }
 
