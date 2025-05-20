@@ -11,10 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package flushlog implements a garbage-collected and snapshottable append-only log of
-// active/resolved notifications. Each log entry stores the active/resolved state,
-// the notified receiver, and a hash digest of the notification's identifying contents.
-// The log can be queried along different parameters.
+// Package flushlog implements a garbage-collected and snapshottable log of flushes.
 package flushlog
 
 import (
@@ -79,37 +76,37 @@ func newMetrics(r prometheus.Registerer) *metrics {
 
 	m.gcDuration = prometheus.NewSummary(prometheus.SummaryOpts{
 		Name:       "alertmanager_flushlog_gc_duration_seconds",
-		Help:       "Duration of the last notification log garbage collection cycle.",
+		Help:       "Duration of the last flush log garbage collection cycle.",
 		Objectives: map[float64]float64{},
 	})
 	m.snapshotDuration = prometheus.NewSummary(prometheus.SummaryOpts{
 		Name:       "alertmanager_flushlog_snapshot_duration_seconds",
-		Help:       "Duration of the last notification log snapshot.",
+		Help:       "Duration of the last flush log snapshot.",
 		Objectives: map[float64]float64{},
 	})
 	m.snapshotSize = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "alertmanager_flushlog_snapshot_size_bytes",
-		Help: "Size of the last notification log snapshot in bytes.",
+		Help: "Size of the last flush log snapshot in bytes.",
 	})
 	m.maintenanceTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "alertmanager_flushlog_maintenance_total",
-		Help: "How many maintenances were executed for the notification log.",
+		Help: "How many maintenances were executed for the flush log.",
 	})
 	m.maintenanceErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "alertmanager_flushlog_maintenance_errors_total",
-		Help: "How many maintenances were executed for the notification log that failed.",
+		Help: "How many maintenances were executed for the flush log that failed.",
 	})
 	m.queriesTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "alertmanager_flushlog_queries_total",
-		Help: "Number of notification log queries were received.",
+		Help: "Number of flush log queries were received.",
 	})
 	m.queryErrorsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "alertmanager_flushlog_query_errors_total",
-		Help: "Number notification log received queries that failed.",
+		Help: "Number flush log received queries that failed.",
 	})
 	m.queryDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:                            "alertmanager_flushlog_query_duration_seconds",
-		Help:                            "Duration of notification log query evaluation.",
+		Help:                            "Duration of flush log query evaluation.",
 		Buckets:                         prometheus.DefBuckets,
 		NativeHistogramBucketFactor:     1.1,
 		NativeHistogramMaxBucketNumber:  100,
@@ -247,7 +244,7 @@ func New(o Options) (*FlushLog, error) {
 			if !os.IsNotExist(err) {
 				return nil, err
 			}
-			level.Debug(l.logger).Log("msg", "notification log snapshot file doesn't exist", "err", err)
+			level.Debug(l.logger).Log("msg", "flush log snapshot file doesn't exist", "err", err)
 		} else {
 			o.SnapshotReader = r
 			defer r.Close()
@@ -267,7 +264,7 @@ func (l *FlushLog) now() time.Time {
 	return l.clock.Now()
 }
 
-// Maintenance garbage collects the notification log state at the given interval. If the snapshot
+// Maintenance garbage collects the flush log state at the given interval. If the snapshot
 // file is set, a snapshot is written to it afterwards.
 // Terminates on receiving from stopc.
 // If not nil, the last argument is an override for what to do as part of the maintenance - for advanced usage.
@@ -414,7 +411,7 @@ func (l *FlushLog) Query(groupFingerprint uint64) ([]*pb.FlushLog, error) {
 	entries, err := func() ([]*pb.FlushLog, error) {
 		// receiver/group_key combination.
 		if groupFingerprint == 0 {
-			return nil, errors.New("no query parameters specified")
+			return nil, errors.New("invalid group fingerprint")
 		}
 
 		l.mtx.RLock()
@@ -462,7 +459,7 @@ func (l *FlushLog) Snapshot(w io.Writer) (int64, error) {
 	return io.Copy(w, bytes.NewReader(b))
 }
 
-// MarshalBinary serializes all contents of the notification log.
+// MarshalBinary serializes all contents of the flush log.
 func (l *FlushLog) MarshalBinary() ([]byte, error) {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
@@ -470,7 +467,7 @@ func (l *FlushLog) MarshalBinary() ([]byte, error) {
 	return l.st.MarshalBinary()
 }
 
-// Merge merges notification log state received from the cluster with the local state.
+// Merge merges flush log state received from the cluster with the local state.
 func (l *FlushLog) Merge(b []byte) error {
 	st, err := decodeState(bytes.NewReader(b))
 	if err != nil {

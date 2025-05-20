@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	pb "github.com/prometheus/alertmanager/nflog/nflogpb"
+	pb "github.com/prometheus/alertmanager/flushlog/flushlogpb"
 
 	"github.com/benbjohnson/clock"
 	"github.com/prometheus/client_golang/prometheus"
@@ -35,17 +35,17 @@ func TestLogGC(t *testing.T) {
 	mockClock := clock.NewMock()
 	now := mockClock.Now()
 	// We only care about key names and expiration timestamps.
-	newEntry := func(ts time.Time) *pb.MeshEntry {
-		return &pb.MeshEntry{
+	newFlushLog := func(ts time.Time) *pb.MeshFlushLog {
+		return &pb.MeshFlushLog{
 			ExpiresAt: ts,
 		}
 	}
 
-	l := &Log{
+	l := &FlushLog{
 		st: state{
-			"a1": newEntry(now),
-			"a2": newEntry(now.Add(time.Second)),
-			"a3": newEntry(now.Add(-time.Second)),
+			1: newFlushLog(now),
+			2: newFlushLog(now.Add(time.Second)),
+			3: newFlushLog(now.Add(-time.Second)),
 		},
 		clock:   mockClock,
 		metrics: newMetrics(nil),
@@ -55,7 +55,7 @@ func TestLogGC(t *testing.T) {
 	require.Equal(t, 2, n, "unexpected number of removed entries")
 
 	expected := state{
-		"a2": newEntry(now.Add(time.Second)),
+		1: newFlushLog(now.Add(time.Second)),
 	}
 	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
 }
@@ -66,35 +66,28 @@ func TestLogSnapshot(t *testing.T) {
 	now := mockClock.Now().UTC()
 
 	cases := []struct {
-		entries []*pb.MeshEntry
+		entries []*pb.MeshFlushLog
 	}{
 		{
-			entries: []*pb.MeshEntry{
+			entries: []*pb.MeshFlushLog{
 				{
-					Entry: &pb.Entry{
-						GroupKey:  []byte("d8e8fca2dc0f896fd7cb4cb0031ba249"),
-						Receiver:  &pb.Receiver{GroupName: "abc", Integration: "test1", Idx: 1},
-						GroupHash: []byte("126a8a51b9d1bbd07fddc65819a542c3"),
-						Resolved:  false,
-						Timestamp: now,
+					FlushLog: &pb.FlushLog{
+						GroupFingerprint: 1,
+						Timestamp:        now,
 					},
 					ExpiresAt: now,
-				}, {
-					Entry: &pb.Entry{
-						GroupKey:  []byte("d8e8fca2dc0f8abce7cb4cb0031ba249"),
-						Receiver:  &pb.Receiver{GroupName: "def", Integration: "test2", Idx: 29},
-						GroupHash: []byte("122c2331b9d1bbd07fddc65819a542c3"),
-						Resolved:  true,
-						Timestamp: now,
+				},
+				{
+					FlushLog: &pb.FlushLog{
+						GroupFingerprint: 2,
+						Timestamp:        now,
 					},
 					ExpiresAt: now,
-				}, {
-					Entry: &pb.Entry{
-						GroupKey:  []byte("aaaaaca2dc0f896fd7cb4cb0031ba249"),
-						Receiver:  &pb.Receiver{GroupName: "ghi", Integration: "test3", Idx: 0},
-						GroupHash: []byte("126a8a51b9d1bbd07fddc6e3e3e542c3"),
-						Resolved:  false,
-						Timestamp: now,
+				},
+				{
+					FlushLog: &pb.FlushLog{
+						GroupFingerprint: 3,
+						Timestamp:        now,
 					},
 					ExpiresAt: now,
 				},
@@ -106,13 +99,13 @@ func TestLogSnapshot(t *testing.T) {
 		f, err := os.CreateTemp("", "snapshot")
 		require.NoError(t, err, "creating temp file failed")
 
-		l1 := &Log{
+		l1 := &FlushLog{
 			st:      state{},
 			metrics: newMetrics(nil),
 		}
 		// Setup internal state manually.
-		for _, e := range c.entries {
-			l1.st[stateKey(string(e.Entry.GroupKey), e.Entry.Receiver)] = e
+		for i, e := range c.entries {
+			l1.st[uint64(i)] = e
 		}
 		_, err = l1.Snapshot(f)
 		require.NoError(t, err, "creating snapshot failed")
@@ -122,7 +115,7 @@ func TestLogSnapshot(t *testing.T) {
 		require.NoError(t, err, "opening snapshot file failed")
 
 		// Check again against new nlog instance.
-		l2 := &Log{}
+		l2 := &FlushLog{}
 		err = l2.loadSnapshot(f)
 		require.NoError(t, err, "error loading snapshot")
 		require.Equal(t, l1.st, l2.st, "state after loading snapshot did not match snapshotted state")
@@ -174,13 +167,13 @@ func TestWithMaintenance_SupportsCustomCallback(t *testing.T) {
 	require.EqualValues(t, 2, calls.Load())
 	// Check the maintenance metrics.
 	require.NoError(t, testutil.GatherAndCompare(reg, bytes.NewBufferString(`
-# HELP alertmanager_nflog_maintenance_errors_total How many maintenances were executed for the notification log that failed.
-# TYPE alertmanager_nflog_maintenance_errors_total counter
-alertmanager_nflog_maintenance_errors_total 0
-# HELP alertmanager_nflog_maintenance_total How many maintenances were executed for the notification log.
-# TYPE alertmanager_nflog_maintenance_total counter
-alertmanager_nflog_maintenance_total 2
-`), "alertmanager_nflog_maintenance_total", "alertmanager_nflog_maintenance_errors_total"))
+# HELP alertmanager_flushlog_maintenance_errors_total How many maintenances were executed for the flush log that failed.
+# TYPE alertmanager_flushlog_maintenance_errors_total counter
+alertmanager_flushlog_maintenance_errors_total 0
+# HELP alertmanager_flushlog_maintenance_total How many maintenances were executed for the flush log.
+# TYPE alertmanager_flushlog_maintenance_total counter
+alertmanager_flushlog_maintenance_total 2
+`), "alertmanager_flushlog_maintenance_total", "alertmanager_flushlog_maintenance_errors_total"))
 }
 
 func TestReplaceFile(t *testing.T) {
@@ -217,16 +210,11 @@ func TestStateMerge(t *testing.T) {
 
 	// We only care about key names and timestamps for the
 	// merging logic.
-	newEntry := func(name string, ts, exp time.Time) *pb.MeshEntry {
-		return &pb.MeshEntry{
-			Entry: &pb.Entry{
-				Timestamp: ts,
-				GroupKey:  []byte("key"),
-				Receiver: &pb.Receiver{
-					GroupName:   name,
-					Idx:         1,
-					Integration: "integr",
-				},
+	newFlushLog := func(fp uint64, ts, exp time.Time) *pb.MeshFlushLog {
+		return &pb.MeshFlushLog{
+			FlushLog: &pb.FlushLog{
+				GroupFingerprint: fp,
+				Timestamp:        ts,
 			},
 			ExpiresAt: exp,
 		}
@@ -240,21 +228,21 @@ func TestStateMerge(t *testing.T) {
 	}{
 		{
 			a: state{
-				"key:a1/integr/1": newEntry("a1", now, exp),
-				"key:a2/integr/1": newEntry("a2", now, exp),
-				"key:a3/integr/1": newEntry("a3", now, exp),
+				1: newFlushLog(1, now, exp),
+				2: newFlushLog(2, now, exp),
+				3: newFlushLog(3, now, exp),
 			},
 			b: state{
-				"key:b1/integr/1": newEntry("b1", now, exp),                                          // new key, should be added
-				"key:b2/integr/1": newEntry("b2", now.Add(-time.Minute), now.Add(-time.Millisecond)), // new key, expired, should not be added
-				"key:a2/integr/1": newEntry("a2", now.Add(-time.Minute), exp),                        // older timestamp, should be dropped
-				"key:a3/integr/1": newEntry("a3", now.Add(time.Minute), exp),                         // newer timestamp, should overwrite
+				4: newFlushLog(4, now, exp),                                          // new key, should be added
+				5: newFlushLog(5, now.Add(-time.Minute), now.Add(-time.Millisecond)), // new key, expired, should not be added
+				2: newFlushLog(2, now.Add(-time.Minute), exp),                        // older timestamp, should be dropped
+				3: newFlushLog(3, now.Add(time.Minute), exp),                         // newer timestamp, should overwrite
 			},
 			final: state{
-				"key:a1/integr/1": newEntry("a1", now, exp),
-				"key:a2/integr/1": newEntry("a2", now, exp),
-				"key:a3/integr/1": newEntry("a3", now.Add(time.Minute), exp),
-				"key:b1/integr/1": newEntry("b1", now, exp),
+				1: newFlushLog(1, now, exp),
+				2: newFlushLog(2, now, exp),
+				3: newFlushLog(3, now.Add(time.Minute), exp),
+				4: newFlushLog(4, now, exp),
 			},
 		},
 	}
@@ -278,35 +266,26 @@ func TestStateDataCoding(t *testing.T) {
 	now := mockClock.Now().UTC()
 
 	cases := []struct {
-		entries []*pb.MeshEntry
+		entries []*pb.MeshFlushLog
 	}{
 		{
-			entries: []*pb.MeshEntry{
+			entries: []*pb.MeshFlushLog{
 				{
-					Entry: &pb.Entry{
-						GroupKey:  []byte("d8e8fca2dc0f896fd7cb4cb0031ba249"),
-						Receiver:  &pb.Receiver{GroupName: "abc", Integration: "test1", Idx: 1},
-						GroupHash: []byte("126a8a51b9d1bbd07fddc65819a542c3"),
-						Resolved:  false,
-						Timestamp: now,
+					FlushLog: &pb.FlushLog{
+						GroupFingerprint: 1,
+						Timestamp:        now,
 					},
 					ExpiresAt: now,
 				}, {
-					Entry: &pb.Entry{
-						GroupKey:  []byte("d8e8fca2dc0f8abce7cb4cb0031ba249"),
-						Receiver:  &pb.Receiver{GroupName: "def", Integration: "test2", Idx: 29},
-						GroupHash: []byte("122c2331b9d1bbd07fddc65819a542c3"),
-						Resolved:  true,
-						Timestamp: now,
+					FlushLog: &pb.FlushLog{
+						GroupFingerprint: 2,
+						Timestamp:        now,
 					},
 					ExpiresAt: now,
 				}, {
-					Entry: &pb.Entry{
-						GroupKey:  []byte("aaaaaca2dc0f896fd7cb4cb0031ba249"),
-						Receiver:  &pb.Receiver{GroupName: "ghi", Integration: "test3", Idx: 0},
-						GroupHash: []byte("126a8a51b9d1bbd07fddc6e3e3e542c3"),
-						Resolved:  false,
-						Timestamp: now,
+					FlushLog: &pb.FlushLog{
+						GroupFingerprint: 3,
+						Timestamp:        now,
 					},
 					ExpiresAt: now,
 				},
@@ -318,7 +297,7 @@ func TestStateDataCoding(t *testing.T) {
 		// Create gossip data from input.
 		in := state{}
 		for _, e := range c.entries {
-			in[stateKey(string(e.Entry.GroupKey), e.Entry.Receiver)] = e
+			in[e.FlushLog.GroupFingerprint] = e
 		}
 		msg, err := in.MarshalBinary()
 		require.NoError(t, err)
@@ -334,40 +313,30 @@ func TestQuery(t *testing.T) {
 	opts := Options{Retention: time.Second}
 	nl, err := New(opts)
 	if err != nil {
-		require.NoError(t, err, "constructing nflog failed")
+		require.NoError(t, err, "constructing flushlog failed")
 	}
-
-	recv := new(pb.Receiver)
-
-	// no key param
-	_, err = nl.Query(QGroupKey("key"))
-	require.EqualError(t, err, "no query parameters specified")
-
-	// no recv param
-	_, err = nl.Query(QReceiver(recv))
-	require.EqualError(t, err, "no query parameters specified")
+	clock := clock.NewMock()
+	// logTS := clock.Now()
+	nl.clock = clock
 
 	// no entry
-	_, err = nl.Query(QGroupKey("nonexistentkey"), QReceiver(recv))
+	_, err = nl.Query(1)
 	require.EqualError(t, err, "not found")
 
-	// existing entry
-	firingAlerts := []uint64{1, 2, 3}
-	resolvedAlerts := []uint64{4, 5}
+	now := time.Now()
+	err = nl.Log(1, now)
+	require.NoError(t, err, "logging flush failed")
 
-	err = nl.Log(recv, "key", firingAlerts, resolvedAlerts, 0, nil)
-	require.NoError(t, err, "logging notification failed")
-
-	entries, err := nl.Query(QGroupKey("key"), QReceiver(recv))
-	require.NoError(t, err, "querying nflog failed")
+	entries, err := nl.Query(1)
+	require.NoError(t, err, "querying flushlog failed")
 	entry := entries[0]
-	require.EqualValues(t, firingAlerts, entry.FiringAlerts)
-	require.EqualValues(t, resolvedAlerts, entry.ResolvedAlerts)
+	require.Equal(t, uint64(1), entry.GroupFingerprint, "unexpected group fingerprint")
+	require.Equal(t, now, entry.Timestamp, "unexpected group fingerprint")
 }
 
 func TestStateDecodingError(t *testing.T) {
 	// Check whether decoding copes with erroneous data.
-	s := state{"": &pb.MeshEntry{}}
+	s := state{1: &pb.MeshFlushLog{}}
 
 	msg, err := s.MarshalBinary()
 	require.NoError(t, err)
