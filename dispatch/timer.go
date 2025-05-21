@@ -20,10 +20,11 @@ import (
 	"math"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/prometheus/alertmanager/flushlog"
 	"github.com/prometheus/alertmanager/flushlog/flushlogpb"
+
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 )
 
 // TimerFactory is a function that creates a timer.
