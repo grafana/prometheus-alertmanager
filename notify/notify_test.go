@@ -67,7 +67,7 @@ func (l *testNflog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
 	return l.qres, l.qerr
 }
 
-func (l *testNflog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, _ *time.Time) error {
+func (l *testNflog) Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error {
 	return l.logFunc(r, gkey, firingAlerts, resolvedAlerts, expiry)
 }
 

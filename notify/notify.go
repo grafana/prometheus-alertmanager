@@ -255,7 +255,7 @@ func (f StageFunc) Exec(ctx context.Context, l log.Logger, alerts ...*types.Aler
 }
 
 type NotificationLog interface {
-	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration, flushTime *time.Time) error
+	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
 	Query(params ...nflog.QueryParam) ([]*nflogpb.Entry, error)
 }
 
@@ -949,7 +949,7 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	}
 	expiry := 2 * repeat
 
-	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry, nil)
+	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry)
 }
 
 type timeStage struct {
