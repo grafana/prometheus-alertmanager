@@ -412,7 +412,7 @@ func (l *FlushLog) GC() (int, error) {
 	defer l.mtx.Unlock()
 
 	for k, le := range l.st {
-		if le.ExpiresAt.IsZero() || !le.ExpiresAt.After(now) {
+		if !le.ExpiresAt.After(now) {
 			delete(l.st, k)
 			n++
 		}
