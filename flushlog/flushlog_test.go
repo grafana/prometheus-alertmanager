@@ -60,6 +60,34 @@ func TestLogGC(t *testing.T) {
 	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
 }
 
+func TestLogDelete(t *testing.T) {
+	mockClock := clock.NewMock()
+	now := mockClock.Now()
+	// We only care about key names and expiration timestamps.
+	newFlushLog := func(ts time.Time) *pb.MeshFlushLog {
+		return &pb.MeshFlushLog{
+			ExpiresAt: ts,
+		}
+	}
+
+	l := &FlushLog{
+		st: state{
+			1: newFlushLog(now),
+			2: newFlushLog(now.Add(time.Second)),
+		},
+		clock:     mockClock,
+		metrics:   newMetrics(nil),
+		broadcast: func([]byte) {},
+	}
+	err := l.Delete(1)
+	require.NoError(t, err, "unexpected delete error")
+
+	expected := state{
+		2: newFlushLog(now.Add(time.Second)),
+	}
+	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
+}
+
 func TestLogSnapshot(t *testing.T) {
 	// Check whether storing and loading the snapshot is symmetric.
 	mockClock := clock.NewMock()
