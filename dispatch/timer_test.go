@@ -22,17 +22,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
+	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/flushlog"
 	"github.com/prometheus/alertmanager/flushlog/flushlogpb"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/model"
-	"github.com/stretchr/testify/require"
-
-	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/provider/mem"
 	"github.com/prometheus/alertmanager/types"
+
+	"github.com/go-kit/log"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/model"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSyncTimer(t *testing.T) {
@@ -230,9 +230,9 @@ func (m *mockLog) Delete(groupFingerprint uint64) error {
 func (m *mockLog) requireCalls() {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
-	require.Len(m.t, m.queryCalls, 0)
-	require.Len(m.t, m.logCalls, 0)
-	require.Len(m.t, m.deleteCalls, 0)
+	require.Empty(m.t, m.queryCalls)
+	require.Empty(m.t, m.logCalls)
+	require.Empty(m.t, m.deleteCalls)
 }
 
 type logBuf struct {
@@ -321,7 +321,7 @@ func benchTimer(timerFactoryBuilder func(*mockLog) TimerFactory, b *testing.B) {
 	for {
 		select {
 		case <-nfC:
-			i += 1
+			i++
 			if i == n {
 				dispatcher.Stop() // ensure we stop the dispatcher before making assertions to mitigate flakiness
 				return
