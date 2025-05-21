@@ -78,6 +78,7 @@ func (sat *standardTimer) Stop() bool {
 type syncTimer struct {
 	t                *time.Timer
 	flushLog         FlushLog
+	position         func() int
 	logger           log.Logger
 	groupFingerprint uint64
 	groupInterval    time.Duration
@@ -91,6 +92,7 @@ type FlushLog interface {
 
 func NewSyncTimerFactory(
 	flushLog FlushLog,
+	position func() int,
 ) TimerFactory {
 	return func(
 		ctx context.Context,
@@ -101,6 +103,7 @@ func NewSyncTimerFactory(
 		st := &syncTimer{
 			t:                time.NewTimer(o.GroupWait),
 			flushLog:         flushLog,
+			position:         position,
 			logger:           l,
 			groupInterval:    o.GroupInterval,
 			groupFingerprint: groupFingerprint,
@@ -163,7 +166,11 @@ func (st *syncTimer) Flush() bool {
 }
 
 func (st *syncTimer) Stop() bool {
-	st.flushLog.Delete(st.groupFingerprint)
+	if st.position() == 0 {
+		if err := st.flushLog.Delete(st.groupFingerprint); err != nil {
+			level.Warn(st.logger).Log("msg", "failed to delete flush log entry", "err", err)
+		}
+	}
 	return st.t.Stop()
 }
 
@@ -172,6 +179,10 @@ func (st *syncTimer) C() <-chan time.Time {
 }
 
 func (st *syncTimer) logFlush(now time.Time) {
+	if st.position() != 0 {
+		return
+	}
+
 	if err := st.flushLog.Log(
 		st.groupFingerprint,
 		now,
