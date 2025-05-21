@@ -87,7 +87,7 @@ func TestSyncTimer(t *testing.T) {
 	nfC := make(chan struct{}, n)
 	stage := &pubStage{nfC}
 
-	dispatcher, err := newTestDispatcher(time.Millisecond*10, alerts, stage, marker, logger, NewSyncTimerFactory(flushlog))
+	dispatcher, err := newTestDispatcher(time.Millisecond*10, alerts, stage, marker, logger, NewSyncTimerFactory(flushlog, func() int { return 0 }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func (pb *logBuf) requireLogs(expLogs ...string) {
 
 func BenchmarkSyncTimer(b *testing.B) {
 	for range b.N {
-		benchTimer(func(m *mockLog) TimerFactory { return NewSyncTimerFactory(m) }, b)
+		benchTimer(func(m *mockLog) TimerFactory { return NewSyncTimerFactory(m, func() int { return 0 }) }, b)
 	}
 }
 
