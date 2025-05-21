@@ -85,7 +85,7 @@ type syncTimer struct {
 }
 
 type FlushLog interface {
-	Log(groupFingerprint uint64, flushTime time.Time) error
+	Log(groupFingerprint uint64, flushTime time.Time, expiry time.Duration) error
 	Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error)
 	Delete(groupFingerprint uint64) error
 }
@@ -186,6 +186,7 @@ func (st *syncTimer) logFlush(now time.Time) {
 	if err := st.flushLog.Log(
 		st.groupFingerprint,
 		now,
+		st.groupInterval*2,
 	); err != nil {
 		// log the error and continue
 		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)
