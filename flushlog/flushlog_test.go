@@ -231,12 +231,14 @@ func TestStateMerge(t *testing.T) {
 				1: newFlushLog(1, now, exp),
 				2: newFlushLog(2, now, exp),
 				3: newFlushLog(3, now, exp),
+				6: newFlushLog(6, now, exp),
 			},
 			b: state{
-				4: newFlushLog(4, now, exp),                                          // new key, should be added
-				5: newFlushLog(5, now.Add(-time.Minute), now.Add(-time.Millisecond)), // new key, expired, should not be added
 				2: newFlushLog(2, now.Add(-time.Minute), exp),                        // older timestamp, should be dropped
 				3: newFlushLog(3, now.Add(time.Minute), exp),                         // newer timestamp, should overwrite
+				4: newFlushLog(4, now, exp),                                          // new key, should be added
+				5: newFlushLog(5, now.Add(-time.Minute), now.Add(-time.Millisecond)), // new key, expired, should not be added
+				6: newFlushLog(6, now, time.Time{}),                                  // zero expiration, should be deleted
 			},
 			final: state{
 				1: newFlushLog(1, now, exp),

@@ -146,7 +146,13 @@ func (s state) clone() state {
 // merge returns true or false whether the MeshFlushLog was merged or
 // not. This information is used to decide to gossip the message further.
 func (s state) merge(e *pb.MeshFlushLog, now time.Time) bool {
-	if e.ExpiresAt.Before(now) {
+	if e.ExpiresAt.IsZero() { // handle delete broadcasts
+		if _, ok := s[e.FlushLog.GroupFingerprint]; !ok {
+			return false
+		}
+		delete(s, e.FlushLog.GroupFingerprint)
+		return true
+	} else if e.ExpiresAt.Before(now) {
 		return false
 	}
 
@@ -175,7 +181,7 @@ func decodeState(r io.Reader) (state, error) {
 		var e pb.MeshFlushLog
 		_, err := pbutil.ReadDelimited(r, &e)
 		if err == nil {
-			if e.FlushLog == nil || e.FlushLog.GroupFingerprint == 0 || e.FlushLog.Timestamp.Equal(time.Time{}) {
+			if e.FlushLog == nil || e.FlushLog.GroupFingerprint == 0 || e.FlushLog.Timestamp.IsZero() {
 				return nil, ErrInvalidState
 			}
 			st[e.FlushLog.GroupFingerprint] = &e
@@ -370,11 +376,19 @@ func (l *FlushLog) Delete(groupFingerprint uint64) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	if _, ok := l.st[groupFingerprint]; !ok {
+	fl, ok := l.st[groupFingerprint]
+	if !ok {
 		return ErrNotFound
 	}
 
 	delete(l.st, groupFingerprint)
+	fl.ExpiresAt = time.Time{} // broadcast expired log
+
+	b, err := marshalMeshFlushLog(fl)
+	if err != nil {
+		return err
+	}
+	l.broadcast(b)
 
 	return nil
 }
@@ -391,10 +405,7 @@ func (l *FlushLog) GC() (int, error) {
 	defer l.mtx.Unlock()
 
 	for k, le := range l.st {
-		if le.ExpiresAt.IsZero() {
-			return n, errors.New("unexpected zero expiration timestamp")
-		}
-		if !le.ExpiresAt.After(now) {
+		if le.ExpiresAt.IsZero() || !le.ExpiresAt.After(now) {
 			delete(l.st, k)
 			n++
 		}
