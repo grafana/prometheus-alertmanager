@@ -230,7 +230,7 @@ func New(o Options) (*FlushLog, error) {
 	}
 
 	l := &FlushLog{
-		retention: time.Hour * 1,
+		retention: time.Hour * 2,
 		logger:    log.NewNopLogger(),
 		st:        state{},
 		broadcast: func([]byte) {},
@@ -341,7 +341,7 @@ Loop:
 	}
 }
 
-func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time) error {
+func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time.Duration) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
@@ -353,12 +353,19 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time) error {
 		}
 	}
 
+	now := l.now()
+
+	expiresAt := now.Add(l.retention)
+	if expiry > 0 && expiry < l.retention {
+		expiresAt = now.Add(expiry)
+	}
+
 	e := &pb.MeshFlushLog{
 		FlushLog: &pb.FlushLog{
 			GroupFingerprint: uint64(groupFingerprint),
 			Timestamp:        flushTime,
 		},
-		ExpiresAt: flushTime.Add(l.retention),
+		ExpiresAt: expiresAt,
 	}
 
 	b, err := marshalMeshFlushLog(e)

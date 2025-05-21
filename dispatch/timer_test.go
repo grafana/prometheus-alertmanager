@@ -51,13 +51,16 @@ func TestSyncTimer(t *testing.T) {
 		logCalls: []mockLogCall{
 			{
 				expGroupFingerprint: 13705263069144098434,
+				expExpiry:           time.Millisecond * 20,
 			},
 		},
 		queryCalls: []mockQueryCall{
 			{ // first call to query doesn't find state
-				err: flushlog.ErrNotFound,
+				expGroupFingerprint: 13705263069144098434,
+				err:                 flushlog.ErrNotFound,
 			},
 			{
+				expGroupFingerprint: 13705263069144098434,
 				res: []*flushlogpb.FlushLog{
 					{
 						GroupFingerprint: 13705263069144098434,
@@ -66,6 +69,7 @@ func TestSyncTimer(t *testing.T) {
 				},
 			},
 			{
+				expGroupFingerprint: 13705263069144098434,
 				res: []*flushlogpb.FlushLog{
 					{
 						GroupFingerprint: 13705263069144098434,
@@ -100,7 +104,7 @@ func TestSyncTimer(t *testing.T) {
 	for {
 		select {
 		case <-nfC:
-			i += 1
+			i++
 			if i == n {
 				dispatcher.Stop() // ensure we stop the dispatcher before making assertions to mitigate flakiness
 
@@ -164,15 +168,18 @@ func (m *mockLog) Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error)
 		m.queryCalls = m.queryCalls[1:]
 	}()
 
+	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
+
 	return c.res, c.err
 }
 
 type mockLogCall struct {
 	expGroupFingerprint uint64
+	expExpiry           time.Duration
 	err                 error
 }
 
-func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time) error {
+func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiry time.Duration) error {
 	if m.bench {
 		return nil
 	}
@@ -189,6 +196,7 @@ func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time) error {
 	}()
 
 	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
+	require.Equal(m.t, c.expExpiry, expiry)
 
 	return c.err
 }

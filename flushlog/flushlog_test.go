@@ -55,7 +55,7 @@ func TestLogGC(t *testing.T) {
 	require.Equal(t, 2, n, "unexpected number of removed entries")
 
 	expected := state{
-		1: newFlushLog(now.Add(time.Second)),
+		2: newFlushLog(now.Add(time.Second)),
 	}
 	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
 }
@@ -105,7 +105,7 @@ func TestLogSnapshot(t *testing.T) {
 		}
 		// Setup internal state manually.
 		for i, e := range c.entries {
-			l1.st[uint64(i)] = e
+			l1.st[uint64(i+1)] = e
 		}
 		_, err = l1.Snapshot(f)
 		require.NoError(t, err, "creating snapshot failed")
@@ -326,7 +326,7 @@ func TestQuery(t *testing.T) {
 	require.EqualError(t, err, "not found")
 
 	now := time.Now()
-	err = nl.Log(1, now)
+	err = nl.Log(1, now, 0)
 	require.NoError(t, err, "logging flush failed")
 
 	entries, err := nl.Query(1)
