@@ -548,10 +548,13 @@ func TestTemplateFuncs(t *testing.T) {
 
 func TestTemplateClone(t *testing.T) {
 	tmpl, err := FromGlobs([]string{})
+	tmpl.ExternalURL = &url.URL{Scheme: "http", Host: "example.com"}
 	require.NoError(t, err)
 
 	clone, err := tmpl.Clone()
 	require.NoError(t, err)
+	require.NotSame(t, tmpl.ExternalURL, clone.ExternalURL)
+	require.EqualValues(t, tmpl.ExternalURL, clone.ExternalURL)
 
 	require.NoError(t, tmpl.Parse(strings.NewReader(`{{ define "base" }}TEST{{ end }}`)))
 	require.NoError(t, clone.Parse(strings.NewReader(`{{ define "cloned" }}BASE{{ end }}`)))

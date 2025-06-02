@@ -430,8 +430,14 @@ func (t *Template) Clone() (*Template, error) {
 	if err != nil {
 		return nil, err
 	}
+	var u *url.URL
+	if t.ExternalURL != nil {
+		u = new(url.URL)
+		*u = *t.ExternalURL
+	}
 	return &Template{
-		text: txt,
-		html: html,
+		text:        txt,
+		html:        html,
+		ExternalURL: u,
 	}, nil
 }
