@@ -420,3 +420,18 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 
 	return data
 }
+
+func (t *Template) Clone() (*Template, error) {
+	txt, err := t.text.Clone()
+	if err != nil {
+		return nil, err
+	}
+	html, err := t.html.Clone()
+	if err != nil {
+		return nil, err
+	}
+	return &Template{
+		text: txt,
+		html: html,
+	}, nil
+}

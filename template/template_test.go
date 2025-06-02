@@ -16,6 +16,7 @@ package template
 import (
 	tmplhtml "html/template"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	tmpltext "text/template"
@@ -543,4 +544,27 @@ func TestTemplateFuncs(t *testing.T) {
 			wg.Wait()
 		})
 	}
+}
+
+func TestTemplateClone(t *testing.T) {
+	tmpl, err := FromGlobs([]string{})
+	require.NoError(t, err)
+
+	clone, err := tmpl.Clone()
+	require.NoError(t, err)
+
+	require.NoError(t, tmpl.Parse(strings.NewReader(`{{ define "base" }}TEST{{ end }}`)))
+	require.NoError(t, clone.Parse(strings.NewReader(`{{ define "cloned" }}BASE{{ end }}`)))
+
+	v, err := tmpl.ExecuteTextString(`{{ template "base" . }}`, nil)
+	require.NoError(t, err)
+	require.Equal(t, "TEST", v)
+	_, err = tmpl.ExecuteTextString(`{{ template "cloned" . }}`, nil)
+	require.ErrorContains(t, err, `template "cloned" not defined`)
+
+	v, err = clone.ExecuteTextString(`{{ template "cloned" . }}`, nil)
+	require.NoError(t, err)
+	require.Equal(t, "BASE", v)
+	_, err = clone.ExecuteTextString(`{{ template "base" . }}`, nil)
+	require.ErrorContains(t, err, `template "base" not defined`)
 }
