@@ -174,7 +174,7 @@ func TestSyncTimer_getFirstFlushTime(t *testing.T) {
 					{},
 				},
 			},
-			expErr: "zero flush time",
+			expErr: flushlog.ErrNotFound.Error(),
 		},
 		{
 			name: "everything works",
