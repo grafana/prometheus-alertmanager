@@ -200,7 +200,7 @@ func TestSyncTimer_getFirstFlushTime(t *testing.T) {
 			ft, err := st.getFirstFlushTime()
 			require.Equal(t, tc.expTime, ft)
 			if tc.expErr == "" {
-				require.Nil(t, err)
+				require.NoError(t, err)
 			} else {
 				require.Equal(t, tc.expErr, err.Error())
 			}
@@ -274,7 +274,7 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 			ft, err := st.getNextTick(tc.now)
 			require.Equal(t, tc.expDuration, ft)
 			if tc.expErr == "" {
-				require.Nil(t, err)
+				require.NoError(t, err)
 			} else {
 				require.Equal(t, tc.expErr, err.Error())
 			}
