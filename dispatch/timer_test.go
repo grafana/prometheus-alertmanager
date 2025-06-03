@@ -16,6 +16,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -126,6 +127,234 @@ func TestSyncTimer(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("timed out waiting for dispatcher to finish")
 		}
+	}
+}
+
+func TestSyncTimer_getFirstFlushTime(t *testing.T) {
+	now := time.Now()
+	tt := []struct {
+		name      string
+		queryCall mockQueryCall
+		expTime   *time.Time
+		expErr    string
+	}{
+		{
+			name: "flushLog returns unhandled error",
+			queryCall: mockQueryCall{
+				err: errors.New("mock error"),
+			},
+			expErr: "error querying log entry: mock error",
+		},
+		{
+			name:      "flushLog returns no entry",
+			queryCall: mockQueryCall{},
+			expErr:    flushlog.ErrNotFound.Error(),
+		},
+		{
+			name: "flushLog returns ErrNotFound",
+			queryCall: mockQueryCall{
+				err: flushlog.ErrNotFound,
+			},
+			expErr: flushlog.ErrNotFound.Error(),
+		},
+		{
+			name: "flushLog returns more than one entry",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{},
+					{},
+				},
+			},
+			expErr: "unexpected entry result size: 2",
+		},
+		{
+			name: "zero flush time",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{},
+				},
+			},
+			expErr: "zero flush time",
+		},
+		{
+			name: "everything works",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now,
+					},
+				},
+			},
+			expTime: &now,
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			flushlog := &mockLog{t: t, queryCalls: []mockQueryCall{tc.queryCall}}
+			st := &syncTimer{
+				flushLog:         flushlog,
+				logger:           log.NewNopLogger(),
+				groupFingerprint: 0,
+			}
+			ft, err := st.getFirstFlushTime()
+			require.Equal(t, tc.expTime, ft)
+			if tc.expErr == "" {
+				require.Nil(t, err)
+			} else {
+				require.Equal(t, tc.expErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestSyncTimer_getNextTick(t *testing.T) {
+	now := time.Now()
+	tt := []struct {
+		name        string
+		queryCall   mockQueryCall
+		now         time.Time
+		expDuration time.Duration
+		expErr      string
+	}{
+		{
+			name: "getFirstFlushTime returns error",
+			queryCall: mockQueryCall{
+				err: errors.New("mock error"),
+			},
+			expErr:      "error querying log entry: mock error",
+			expDuration: time.Millisecond * 10,
+		},
+		{
+			name: "first flush = now - groupInterval",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 10),
+					},
+				},
+			},
+			now:         now,
+			expDuration: 0,
+		},
+		{
+			name: "first flush = now - (groupInterval/2)",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 5),
+					},
+				},
+			},
+			now:         now,
+			expDuration: time.Millisecond * 5,
+		},
+		{
+			name: "first flush = now - (groupInterval*1.5)",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 15),
+					},
+				},
+			},
+			now:         now,
+			expDuration: time.Millisecond * 5,
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			flushlog := &mockLog{t: t, queryCalls: []mockQueryCall{tc.queryCall}}
+			st := &syncTimer{
+				flushLog:      flushlog,
+				logger:        log.NewNopLogger(),
+				groupInterval: time.Millisecond * 10,
+			}
+			ft, err := st.getNextTick(tc.now)
+			require.Equal(t, tc.expDuration, ft)
+			if tc.expErr == "" {
+				require.Nil(t, err)
+			} else {
+				require.Equal(t, tc.expErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestSyncTimer_nextFlushIteration(t *testing.T) {
+	now := time.Now()
+	tt := []struct {
+		name         string
+		firstFlush   time.Time
+		now          time.Time
+		expIteration int64
+	}{
+		{
+			name:         "now < flush",
+			now:          now.Add(-time.Millisecond * 10),
+			firstFlush:   now,
+			expIteration: 0,
+		},
+		{
+			name:         "now = flush",
+			now:          now,
+			firstFlush:   now,
+			expIteration: 0,
+		},
+		{
+			name:         "now = flush+1",
+			now:          now.Add(time.Millisecond * 1),
+			firstFlush:   now,
+			expIteration: 1,
+		},
+		{
+			name:         "now = flush+3",
+			now:          now.Add(time.Millisecond * 3),
+			firstFlush:   now,
+			expIteration: 1,
+		},
+		{
+			name:         "now = flush+7",
+			now:          now.Add(time.Millisecond * 7),
+			firstFlush:   now,
+			expIteration: 1,
+		},
+		{
+			name:         "now = flush+10",
+			now:          now.Add(time.Millisecond * 10),
+			firstFlush:   now,
+			expIteration: 1,
+		},
+		{
+			name:         "now = flush+11",
+			now:          now.Add(time.Millisecond * 11),
+			firstFlush:   now,
+			expIteration: 2,
+		},
+		{
+			name:         "now = flush+19",
+			now:          now.Add(time.Millisecond * 19),
+			firstFlush:   now,
+			expIteration: 2,
+		},
+		{
+			name:         "now = flush+22",
+			now:          now.Add(time.Millisecond * 22),
+			firstFlush:   now,
+			expIteration: 3,
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &syncTimer{
+				logger:        log.NewNopLogger(),
+				groupInterval: time.Millisecond * 10,
+			}
+			fi := st.nextFlushIteration(tc.firstFlush, tc.now)
+			require.Equal(t, tc.expIteration, fi)
+		})
 	}
 }
 
