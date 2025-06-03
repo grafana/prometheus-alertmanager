@@ -125,8 +125,8 @@ func (st *syncTimer) getFirstFlushTime() (*time.Time, error) {
 	}
 
 	ft := entries[0].Timestamp
-	if ft.Equal(time.Time{}) {
-		return nil, fmt.Errorf("flush time nil or empty")
+	if ft.IsZero() {
+		return nil, fmt.Errorf("zero flush time")
 	}
 
 	return &ft, nil
