@@ -195,10 +195,15 @@ func (st *syncTimer) logFlush(now time.Time) {
 }
 
 func (st *syncTimer) nextFlushIteration(firstFlush, now time.Time) int64 {
-	// convert it all to seconds
-	ns := now.Unix()
-	fs := firstFlush.Unix()
-	gs := st.groupInterval.Seconds()
+	if now.Before(firstFlush) {
+		level.Warn(st.logger).Log("msg", "now is before first flush", "first flush", firstFlush, "now", now)
+		return 0
+	}
 
-	return int64(math.Ceil(float64(ns-fs) / gs))
+	// convert it all to milliseconds
+	ns := now.UnixMilli()
+	fs := firstFlush.UnixMilli()
+	gs := st.groupInterval.Milliseconds()
+
+	return int64(math.Ceil(float64(ns-fs) / float64(gs)))
 }
