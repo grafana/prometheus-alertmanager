@@ -65,7 +65,7 @@ func TestSyncTimer(t *testing.T) {
 				res: []*flushlogpb.FlushLog{
 					{
 						GroupFingerprint: 13705263069144098434,
-						Timestamp:        now,
+						Timestamp:        now.Add(-1 * time.Second),
 					},
 				},
 			},
@@ -74,7 +74,7 @@ func TestSyncTimer(t *testing.T) {
 				res: []*flushlogpb.FlushLog{
 					{
 						GroupFingerprint: 13705263069144098434,
-						Timestamp:        now.Add(time.Millisecond * 80),
+						Timestamp:        now.Add(time.Millisecond*80 - time.Second),
 					},
 				},
 			},
@@ -120,7 +120,7 @@ func TestSyncTimer(t *testing.T) {
 					"flushing",              // 2.3. logs the flush
 					"found flush log entry", // 3.1. finds an entry, so calculates next tick
 					"calculated next tick",  // 3.2. calculates next tick
-					"flushing",              // 3.3. flushes the entry
+					"flushing",              // 3.3. flushes
 				)
 				return
 			}
