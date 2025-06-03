@@ -465,7 +465,7 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 	}
 	ag.ctx, ag.cancel = context.WithCancel(ctx)
 
-	ag.logger = logger.With("aggrGroup", ag)
+	ag.logger = logger.With("aggrGroup", ag, "group_fingerprint", ag.fingerprint())
 
 	// Set an initial one-time wait before flushing
 	// the first batch of notifications.
