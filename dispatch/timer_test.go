@@ -267,19 +267,18 @@ func (pb *logBuf) requireLogs(expLogs ...string) {
 }
 
 func BenchmarkSyncTimer(b *testing.B) {
-	for range b.N {
+	for b.Loop() {
 		benchTimer(func(m *mockLog) TimerFactory { return NewSyncTimerFactory(m, func() int { return 0 }) }, b)
 	}
 }
 
 func BenchmarkStdTimer(b *testing.B) {
-	for range b.N {
+	for b.Loop() {
 		benchTimer(func(*mockLog) TimerFactory { return standardTimerFactory }, b)
 	}
 }
 
 func benchTimer(timerFactoryBuilder func(*mockLog) TimerFactory, b *testing.B) {
-	b.StopTimer()
 	logger := log.NewNopLogger()
 	marker := types.NewMarker(prometheus.NewRegistry())
 	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
@@ -307,9 +306,6 @@ func benchTimer(timerFactoryBuilder func(*mockLog) TimerFactory, b *testing.B) {
 	for i := 0; i < n; i++ {
 		as = append(as, newAlert(model.LabelSet{"alertname": model.LabelValue(fmt.Sprintf("TestingAlert_%d", i))}))
 	}
-
-	b.StartTimer()
-	defer b.StopTimer()
 
 	go dispatcher.Run()
 
