@@ -145,7 +145,7 @@ func (st *syncTimer) getNextTick(now time.Time) (time.Duration, error) {
 		return next.Sub(now), nil
 	}
 
-	return st.groupInterval, nil
+	return 0, nil
 }
 
 func (st *syncTimer) Reset(now time.Time) bool {
