@@ -135,7 +135,7 @@ func (st *syncTimer) getFirstFlushTime() (*time.Time, error) {
 func (st *syncTimer) getNextTick(now time.Time) (time.Duration, error) {
 	ft, err := st.getFirstFlushTime()
 	if err != nil {
-		return st.groupInterval, err
+		return 0, err
 	}
 
 	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
