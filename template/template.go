@@ -420,3 +420,13 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 
 	return data
 }
+
+// HTML returns the clone of HTML template.
+func (t *Template) HTML() (*tmplhtml.Template, error) {
+	return t.html.Clone()
+}
+
+// Text returns the clone of text template.
+func (t *Template) Text() (*tmpltext.Template, error) {
+	return t.text.Clone()
+}
