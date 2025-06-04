@@ -94,7 +94,7 @@ func NewFlags(logger log.Logger, features string) (Flagger, error) {
 			level.Warn(logger).Log("msg", "Experimental receiver name in metrics enabled")
 		case FeatureClassicMode:
 			opts = append(opts, enableClassicMode())
-			level.Warn(logger).Log("msg", "Classic mode enabled")
+			level.Warn(logger).Log("msg", "UTF-8 strict mode is disabled; non-UTF-8 characters will be accepted")
 		case FeatureUTF8StrictMode:
 			opts = append(opts, enableUTF8StrictMode())
 			level.Warn(logger).Log("msg", "UTF-8 strict mode enabled")
