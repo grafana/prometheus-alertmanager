@@ -320,7 +320,7 @@ func TestPrepareSearchRequest(t *testing.T) {
 func TestJiraTemplating(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/search":
+		case "/search/jql":
 			w.Write([]byte(`{"total": 0, "issues": []}`))
 			return
 		default:
@@ -464,7 +464,6 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
-				Total:  0,
 				Issues: []issue{},
 			},
 			issue: issue{
@@ -562,7 +561,6 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
-				Total:  0,
 				Issues: []issue{},
 			},
 			issue: issue{
@@ -612,7 +610,6 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
-				Total: 1,
 				Issues: []issue{
 					{
 						Key: "OPS-1",
@@ -668,7 +665,6 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
-				Total: 1,
 				Issues: []issue{
 					{
 						Key: "OPS-3",
@@ -723,7 +719,6 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
-				Total: 1,
 				Issues: []issue{
 					{
 						Key: "OPS-3",
@@ -759,7 +754,7 @@ func TestJiraNotify(t *testing.T) {
 		t.Run(tc.title, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/search":
+				case "/search/jql":
 					enc := json.NewEncoder(w)
 					if err := enc.Encode(tc.searchResponse); err != nil {
 						panic(err)
