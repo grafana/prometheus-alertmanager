@@ -113,14 +113,16 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		Wrap: true,
 	})
 
-	card.AppendItem(AdaptiveCardActionSetItem{
-		Actions: []AdaptiveCardActionItem{
-			AdaptiveCardOpenURLActionItem{
-				Title: "View URL",
-				URL:   n.tmpl.ExternalURL.String(),
+	if !n.conf.HideURLButton {
+		card.AppendItem(AdaptiveCardActionSetItem{
+			Actions: []AdaptiveCardActionItem{
+				AdaptiveCardOpenURLActionItem{
+					Title: "View URL",
+					URL:   n.tmpl.ExternalURL.String(),
+				},
 			},
-		},
-	})
+		})
+	}
 
 	msg := NewAdaptiveCardsMessage(card)
 	msg.Summary = summary

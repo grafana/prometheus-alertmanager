@@ -934,6 +934,9 @@ Microsoft Teams notifications are sent via the [Incoming Webhooks](https://learn
 [ webhook_url: <secret> ]
 [ webhook_url_file: <filepath> ]
 
+# Hide the "View URL" button added to the notification.
+[ hide_url_button: <bool> ]
+
 # Message title template.
 [ title: <tmpl_string> | default = '{{ template "msteams.default.title" . }}' ]
 

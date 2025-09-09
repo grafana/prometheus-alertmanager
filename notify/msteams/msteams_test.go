@@ -150,6 +150,7 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 		noError         bool
 		isResolved      bool
 		expectRetry     bool
+    hideURLButton   bool
 	}{
 		{
 			name:            "Simple alerting message",
@@ -197,6 +198,44 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 				"type":"message"
 	        }`,
 			noError: true,
+		},
+		{
+			name:            "Simple alerting message",
+			statusCode:      http.StatusOK,
+			responseContent: "",
+			expectedBody: `{
+				"attachments": [
+					{
+						"content": {
+							"body": [
+								{
+									"color":"attention",
+									"size":"large",
+									"text":"",
+									"type":"TextBlock",
+									"weight":"bolder",
+									"wrap":true
+								},
+								{
+									"text":"",
+									"type":"TextBlock",
+									"wrap":true
+								}
+							],
+							"$schema":"http://adaptivecards.io/schemas/adaptive-card.json",
+							"msTeams": {
+								"width": "Full"
+							},
+							"type":"AdaptiveCard",
+							"version":"1.4"
+						},
+						"contentType":"application/vnd.microsoft.card.adaptive"
+					}
+				],
+				"type":"message"
+	        }`,
+			noError: true,
+      hideURLButton: true,
 		},
 		{
 			name:            "Resolved message",
@@ -268,6 +307,7 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 				&config.MSTeamsConfig{
 					WebhookURL: &config.SecretURL{URL: testWebhookURL},
 					HTTPConfig: &commoncfg.HTTPClientConfig{},
+          HideURLButton: tt.hideURLButton,
 				},
 				test.CreateTmpl(t),
 				log.NewNopLogger(),

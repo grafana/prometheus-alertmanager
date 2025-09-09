@@ -815,6 +815,7 @@ type MSTeamsConfig struct {
 	HTTPConfig     *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 	WebhookURL     *SecretURL                  `yaml:"webhook_url,omitempty" json:"webhook_url,omitempty"`
 	WebhookURLFile string                      `yaml:"webhook_url_file,omitempty" json:"webhook_url_file,omitempty"`
+	HideURLButton  bool                        `yaml:"hide_url_button,omitempty" json:"hide_url_button,omitempty"`
 
 	Title   string `yaml:"title,omitempty" json:"title,omitempty"`
 	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
