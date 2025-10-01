@@ -747,6 +747,7 @@ func (n *DedupStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Al
 	}
 
 	needsUpdate, reason := n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval)
+	_ = level.Warn(l).Log("msg", "needsUpdate", "firingSet", firingSet, "resolvedSet", repeatInterval, "needsUpdateReason", needsUpdate, "reason", reason, "receiver", n.recv.GroupName, "integration", n.recv.Integration)
 	if !needsUpdate {
 		return ctx, nil, nil
 	}
