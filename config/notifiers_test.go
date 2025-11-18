@@ -103,6 +103,48 @@ to: 'a@'
 	}
 }
 
+func TestJiraConfigSupportsLegacyAndStructuredFields(t *testing.T) {
+	t.Run("legacy string syntax", func(t *testing.T) {
+		in := `
+project: 'OPS'
+issue_type: 'Incident'
+summary: '{{ template "jira.default.summary" . }}'
+description: '{{ template "jira.default.description" . }}'
+`
+
+		var cfg JiraConfig
+		err := yaml.UnmarshalStrict([]byte(in), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, `{{ template "jira.default.summary" . }}`, cfg.Summary.Template)
+		require.Equal(t, `{{ template "jira.default.description" . }}`, cfg.Description.Template)
+		require.True(t, cfg.Summary.EnableUpdateValue())
+		require.True(t, cfg.Description.EnableUpdateValue())
+	})
+
+	t.Run("structured syntax", func(t *testing.T) {
+		in := `
+project: 'OPS'
+issue_type: 'Incident'
+summary:
+  template: '{{ template "jira.default.summary" . }}'
+  enable_update: false
+description:
+  template: '{{ template "jira.default.description" . }}'
+  enable_update: true
+`
+
+		var cfg JiraConfig
+		err := yaml.UnmarshalStrict([]byte(in), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, `{{ template "jira.default.summary" . }}`, cfg.Summary.Template)
+		require.Equal(t, `{{ template "jira.default.description" . }}`, cfg.Description.Template)
+		require.False(t, cfg.Summary.EnableUpdateValue())
+		require.True(t, cfg.Description.EnableUpdateValue())
+		require.NotNil(t, cfg.Summary.EnableUpdate)
+		require.NotNil(t, cfg.Description.EnableUpdate)
+	})
+}
+
 func TestPagerdutyTestRoutingKey(t *testing.T) {
 	t.Run("error if no routing key or key file", func(t *testing.T) {
 		in := `
