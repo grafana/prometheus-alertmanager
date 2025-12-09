@@ -85,6 +85,13 @@ func TestMSTeamsTemplating(t *testing.T) {
 			retry: false,
 		},
 		{
+			title: "raw message templating",
+			cfg: &config.MSTeamsConfig{
+				RawMessage: `{"@type":"MessageCard","@context":"https://schema.org/extensions", "sections":[{"activityTitle": "{{ template "msteams.default.title" . }}"}]}`,
+			},
+			retry: false,
+		},
+		{
 			title: "title with templating errors",
 			cfg: &config.MSTeamsConfig{
 				Title: "{{ ",
@@ -317,6 +324,74 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNotifier_Notify_RawMessage(t *testing.T) {
+	expected := `{
+	  "@type": "MessageCard",
+	  "@context": "http://schema.org/extensions",
+	  "themeColor": "8C1A1A",
+	  "title": "Prometheus Alert (Firing)",
+	  "sections": [
+	    {
+	      "activityTitle": "test",
+	      "facts": [
+	        { "name": "alertname", "value": "test" }
+	      ],
+	      "markdown": true
+	    }
+	  ]
+	}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		require.JSONEq(t, expected, string(body))
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+
+	raw := `
+		{
+		  "@type": "MessageCard",
+		  "@context": "http://schema.org/extensions",
+		  "themeColor": "{{ if eq .Status "resolved" }}2DC72D{{ else }}8C1A1A{{ end }}",
+		  "title": "Prometheus Alert ({{ .Status | title }})",
+		  "sections": [
+			{
+			  "activityTitle": "{{ .CommonLabels.alertname }}",
+			  "facts": [
+				{{- range $k, $v := .CommonLabels }}
+				{ "name": "{{ $k }}", "value": "{{ $v }}" }
+				{{- end }}
+			  ],
+			  "markdown": true
+			}
+		  ]
+		}
+	`
+	cfg := &config.MSTeamsConfig{
+		WebhookURL: &config.SecretURL{URL: u},
+		RawMessage: raw,
+		HTTPConfig: &commoncfg.HTTPClientConfig{},
+	}
+
+	notifier, err := New(cfg, test.CreateTmpl(t), log.NewNopLogger())
+	require.NoError(t, err)
+
+	ctx := notify.WithGroupKey(context.Background(), "1")
+
+	alert := &types.Alert{
+		Alert: model.Alert{
+			Labels:   model.LabelSet{"alertname": "test"},
+			StartsAt: time.Now(),
+			EndsAt:   time.Now().Add(time.Hour),
+		},
+	}
+
+	ok, err := notifier.Notify(ctx, alert)
+	require.NoError(t, err)
+	require.False(t, ok)
 }
 
 func TestMSTeamsRedactedURL(t *testing.T) {
