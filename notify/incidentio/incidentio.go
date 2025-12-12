@@ -19,11 +19,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	commoncfg "github.com/prometheus/common/config"
 
 	"github.com/prometheus/alertmanager/config"
@@ -41,13 +42,13 @@ const (
 type Notifier struct {
 	conf    *config.IncidentioConfig
 	tmpl    *template.Template
-	logger  *slog.Logger
+	logger  log.Logger
 	client  *http.Client
 	retrier *notify.Retrier
 }
 
 // New returns a new incident.io notifier.
-func New(conf *config.IncidentioConfig, t *template.Template, l *slog.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(conf *config.IncidentioConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	// conf.HTTPConfig is likely to be the global shared HTTPConfig, so we take a
 	// copy to avoid modifying it.
 	httpConfig := *conf.HTTPConfig
@@ -134,7 +135,7 @@ func (n *Notifier) encodeMessage(msg *Message) (bytes.Buffer, error) {
 	}
 
 	if buf.Len() <= maxPayloadSize {
-		n.logger.Warn("Truncated alert content due to incident.io payload size limit",
+		level.Warn(n.logger).Log("msg", "Truncated alert content due to incident.io payload size limit",
 			"original_size", originalSize,
 			"final_size", buf.Len(),
 			"max_size", maxPayloadSize)
@@ -144,7 +145,7 @@ func (n *Notifier) encodeMessage(msg *Message) (bytes.Buffer, error) {
 
 	// Still attempt to send the message even if it exceeds the limit, but log an
 	// error to explain why this is likely to fail.
-	n.logger.Error("Truncated alert content due to incident.io payload size limit, but still exceeds limit",
+	level.Error(n.logger).Log("msg", "Truncated alert content due to incident.io payload size limit, but still exceeds limit",
 		"original_size", originalSize,
 		"final_size", buf.Len(),
 		"max_size", maxPayloadSize)
@@ -162,7 +163,7 @@ func (n *Notifier) Notify(ctx context.Context, alerts ...*types.Alert) (bool, er
 		return false, err
 	}
 
-	n.logger.Debug("incident.io notification", "groupKey", groupKey)
+	level.Debug(n.logger).Log("msg", "incident.io notification", "groupKey", groupKey)
 
 	msg := &Message{
 		Version:         "1",

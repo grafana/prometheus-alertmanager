@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-kit/log"
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
@@ -44,7 +44,7 @@ func TestIncidentIORetry(t *testing.T) {
 			AlertSourceToken: "test-token",
 		},
 		test.CreateTmpl(t),
-		promslog.NewNopLogger(),
+		log.NewNopLogger(),
 	)
 	require.NoError(t, err)
 
@@ -66,7 +66,7 @@ func TestIncidentIORedactedURL(t *testing.T) {
 			AlertSourceToken: "test-token",
 		},
 		test.CreateTmpl(t),
-		promslog.NewNopLogger(),
+		log.NewNopLogger(),
 	)
 	require.NoError(t, err)
 
@@ -89,7 +89,7 @@ func TestIncidentIOURLFromFile(t *testing.T) {
 			AlertSourceToken: "test-token",
 		},
 		test.CreateTmpl(t),
-		promslog.NewNopLogger(),
+		log.NewNopLogger(),
 	)
 	require.NoError(t, err)
 
@@ -142,7 +142,7 @@ func TestIncidentIONotify(t *testing.T) {
 			AlertSourceToken: "test-token",
 		},
 		test.CreateTmpl(t),
-		promslog.NewNopLogger(),
+		log.NewNopLogger(),
 	)
 	require.NoError(t, err)
 
@@ -223,7 +223,7 @@ func TestIncidentIORetryScenarios(t *testing.T) {
 					AlertSourceToken: "test-token",
 				},
 				test.CreateTmpl(t),
-				promslog.NewNopLogger(),
+				log.NewNopLogger(),
 			)
 			require.NoError(t, err)
 
@@ -303,7 +303,7 @@ func TestIncidentIOErrDetails(t *testing.T) {
 }
 
 func TestIncidentIOPayloadTruncation(t *testing.T) {
-	logger := promslog.NewNopLogger()
+	logger := log.NewNopLogger()
 
 	notifier, err := New(
 		&config.IncidentioConfig{
@@ -379,7 +379,7 @@ func TestIncidentIOPayloadTruncation(t *testing.T) {
 
 func TestIncidentIOPayloadTruncationWithLabelTruncation(t *testing.T) {
 	// Test extreme case where even after annotation truncation, labels need to be truncated
-	logger := promslog.NewNopLogger()
+	logger := log.NewNopLogger()
 
 	notifier, err := New(
 		&config.IncidentioConfig{
