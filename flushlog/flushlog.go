@@ -19,14 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"maps"
 	"math/rand"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/benbjohnson/clock"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -42,9 +41,7 @@ var ErrInvalidState = errors.New("invalid state")
 
 // FlushLog holds the flush log state for groups that are active.
 type FlushLog struct {
-	clock clock.Clock
-
-	logger    log.Logger
+	logger    *slog.Logger
 	metrics   *metrics
 	retention time.Duration
 
@@ -137,9 +134,7 @@ type state map[uint64]*pb.MeshFlushLog
 
 func (s state) clone() state {
 	c := make(state, len(s))
-	for k, v := range s {
-		c[k] = v
-	}
+	maps.Copy(c, s)
 	return c
 }
 
@@ -210,7 +205,7 @@ type Options struct {
 
 	Retention time.Duration
 
-	Logger  log.Logger
+	Logger  *slog.Logger
 	Metrics prometheus.Registerer
 }
 
@@ -231,7 +226,7 @@ func New(o Options) (*FlushLog, error) {
 
 	l := &FlushLog{
 		retention: time.Hour * 2,
-		logger:    log.NewNopLogger(),
+		logger:    slog.New(slog.DiscardHandler),
 		st:        state{},
 		broadcast: func([]byte) {},
 		metrics:   newMetrics(o.Metrics),
@@ -250,7 +245,7 @@ func New(o Options) (*FlushLog, error) {
 			if !os.IsNotExist(err) {
 				return nil, err
 			}
-			level.Debug(l.logger).Log("msg", "flush log snapshot file doesn't exist", "err", err)
+			l.logger.Debug("flush log snapshot file doesn't exist", "err", err)
 		} else {
 			o.SnapshotReader = r
 			defer r.Close()
@@ -266,20 +261,16 @@ func New(o Options) (*FlushLog, error) {
 	return l, nil
 }
 
-func (l *FlushLog) now() time.Time {
-	return l.clock.Now()
-}
-
 // Maintenance garbage collects the flush log state at the given interval. If the snapshot
 // file is set, a snapshot is written to it afterwards.
 // Terminates on receiving from stopc.
 // If not nil, the last argument is an override for what to do as part of the maintenance - for advanced usage.
 func (l *FlushLog) Maintenance(interval time.Duration, snapf string, stopc <-chan struct{}, override MaintenanceFunc) {
 	if interval == 0 || stopc == nil {
-		level.Error(l.logger).Log("msg", "interval or stop signal are missing - not running maintenance")
+		l.logger.Error("interval or stop signal are missing - not running maintenance")
 		return
 	}
-	t := l.clock.Ticker(interval)
+	t := time.NewTicker(interval)
 	defer t.Stop()
 
 	var doMaintenance MaintenanceFunc
@@ -308,15 +299,15 @@ func (l *FlushLog) Maintenance(interval time.Duration, snapf string, stopc <-cha
 
 	runMaintenance := func(do func() (int64, error)) error {
 		l.metrics.maintenanceTotal.Inc()
-		start := l.now().UTC()
-		level.Debug(l.logger).Log("msg", "Running maintenance")
+		start := time.Now().UTC()
+		l.logger.Debug("Running maintenance")
 		size, err := do()
 		l.metrics.snapshotSize.Set(float64(size))
 		if err != nil {
 			l.metrics.maintenanceErrorsTotal.Inc()
 			return err
 		}
-		level.Debug(l.logger).Log("msg", "Maintenance done", "duration", l.now().Sub(start), "size", size)
+		l.logger.Debug("Maintenance done", "duration", time.Since(start), "size", size)
 		return nil
 	}
 
@@ -327,7 +318,7 @@ Loop:
 			break Loop
 		case <-t.C:
 			if err := runMaintenance(doMaintenance); err != nil {
-				level.Error(l.logger).Log("msg", "Running maintenance failed", "err", err)
+				l.logger.Error("Running maintenance failed", "err", err)
 			}
 		}
 	}
@@ -337,7 +328,7 @@ Loop:
 		return
 	}
 	if err := runMaintenance(doMaintenance); err != nil {
-		level.Error(l.logger).Log("msg", "Creating shutdown snapshot failed", "err", err)
+		l.logger.Error("Creating shutdown snapshot failed", "err", err)
 	}
 }
 
@@ -353,7 +344,7 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time
 		}
 	}
 
-	now := l.now()
+	now := time.Now()
 
 	expiresAt := now.Add(l.retention)
 	if expiry > 0 && expiry < l.retention {
@@ -372,7 +363,7 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time
 	if err != nil {
 		return err
 	}
-	l.st.merge(e, l.now())
+	l.st.merge(e, time.Now())
 	l.broadcast(b)
 
 	return nil
@@ -405,7 +396,7 @@ func (l *FlushLog) GC() (int, error) {
 	start := time.Now()
 	defer func() { l.metrics.gcDuration.Observe(time.Since(start).Seconds()) }()
 
-	now := l.now()
+	now := time.Now()
 	var n int
 
 	l.mtx.Lock()
@@ -493,7 +484,7 @@ func (l *FlushLog) Merge(b []byte) error {
 	}
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
-	now := l.now()
+	now := time.Now()
 
 	for _, e := range st {
 		if merged := l.st.merge(e, now); merged && !cluster.OversizedMessage(b) {
@@ -503,7 +494,7 @@ func (l *FlushLog) Merge(b []byte) error {
 			// all nodes already.
 			l.broadcast(b)
 			l.metrics.propagatedMessagesTotal.Inc()
-			level.Debug(l.logger).Log("msg", "gossiping new entry", "entry", e)
+			l.logger.Debug("gossiping new entry", "entry", e)
 		}
 	}
 	return nil
@@ -524,13 +515,13 @@ type replaceFile struct {
 }
 
 func (f *replaceFile) Close() error {
-	if err := f.File.Sync(); err != nil {
+	if err := f.Sync(); err != nil {
 		return err
 	}
 	if err := f.File.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.File.Name(), f.filename)
+	return os.Rename(f.Name(), f.filename)
 }
 
 // openReplace opens a new temporary file that is moved to filename on closing.
