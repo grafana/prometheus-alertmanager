@@ -24,6 +24,7 @@ import (
 
 	pb "github.com/prometheus/alertmanager/flushlog/flushlogpb"
 
+	"github.com/benbjohnson/clock"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -162,25 +163,29 @@ func TestWithMaintenance_SupportsCustomCallback(t *testing.T) {
 	}
 
 	l, err := New(opts)
+	clock := clock.NewMock()
+	l.clock = clock
 	require.NoError(t, err)
 
 	var calls atomic.Int32
 	var wg sync.WaitGroup
 
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		l.Maintenance(100*time.Millisecond, f.Name(), stopc, func() (int64, error) {
 			calls.Add(1)
 			return 0, nil
 		})
-	})
+	}()
 	gosched()
 
 	// Before the first tick, no maintenance executed.
-	time.Sleep(99 * time.Millisecond)
+	clock.Add(99 * time.Millisecond)
 	require.EqualValues(t, 0, calls.Load())
 
 	// Tick once.
-	time.Sleep(1 * time.Millisecond)
+	clock.Add(1 * time.Millisecond)
 	require.EqualValues(t, 1, calls.Load())
 
 	// Stop the maintenance loop. We should get exactly one more execution of the maintenance func.

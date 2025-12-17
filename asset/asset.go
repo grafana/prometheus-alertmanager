@@ -13,6 +13,8 @@
 
 //go:build dev
 
+//nolint:govet
+
 package asset
 
 import (

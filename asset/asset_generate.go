@@ -13,6 +13,8 @@
 
 //go:build ignore
 
+//nolint:govet
+
 package main
 
 import (
