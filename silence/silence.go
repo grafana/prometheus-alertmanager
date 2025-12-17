@@ -432,6 +432,7 @@ func newMetrics(r prometheus.Registerer, s *Silences) *metrics {
 			Name: "alertmanager_silences_version_index_size",
 			Help: "The number of entries in the version index.",
 		})
+		r.MustRegister(m.silencesActive, m.silencesPending, m.silencesExpired)
 	}
 
 	return m
