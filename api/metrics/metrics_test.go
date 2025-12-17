@@ -16,8 +16,6 @@ package metrics
 import (
 	"testing"
 
-	"github.com/go-kit/log"
-
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -26,11 +24,10 @@ import (
 func Test_NewAlerts(t *testing.T) {
 	t.Run("metrics are registered and collected successfully despite being registered previously", func(t *testing.T) {
 		r := prometheus.NewRegistry()
-		l := log.NewNopLogger()
 
 		require.NotPanics(t, func() {
-			for i := 0; i < 3; i++ {
-				as := NewAlerts(r, l)
+			for range 3 {
+				as := NewAlerts(r)
 				as.Firing().Inc()
 				as.Resolved().Inc()
 				as.Invalid().Inc()
@@ -38,7 +35,7 @@ func Test_NewAlerts(t *testing.T) {
 				mf, err := r.Gather()
 				require.NoError(t, err)
 
-				for j := 0; j < len(mf); j++ {
+				for j := range len(mf) {
 					require.Equal(t, float64(1), mf[j].GetMetric()[0].GetCounter().GetValue())
 				}
 			}

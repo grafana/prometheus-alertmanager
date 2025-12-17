@@ -32,8 +32,8 @@ import (
 )
 
 func TestLogGC(t *testing.T) {
-	mockClock := clock.NewMock()
-	now := mockClock.Now()
+	// mockClock removed
+	now := time.Now()
 	// We only care about key names and expiration timestamps.
 	newFlushLog := func(ts time.Time) *pb.MeshFlushLog {
 		return &pb.MeshFlushLog{
@@ -47,7 +47,7 @@ func TestLogGC(t *testing.T) {
 			2: newFlushLog(now.Add(time.Second)),
 			3: newFlushLog(now.Add(-time.Second)),
 		},
-		clock:   mockClock,
+		// clock removed
 		metrics: newMetrics(nil),
 	}
 	n, err := l.GC()
@@ -61,8 +61,8 @@ func TestLogGC(t *testing.T) {
 }
 
 func TestLogDelete(t *testing.T) {
-	mockClock := clock.NewMock()
-	now := mockClock.Now()
+	// mockClock removed
+	now := time.Now()
 	// We only care about key names and expiration timestamps.
 	newFlushLog := func(ts time.Time) *pb.MeshFlushLog {
 		return &pb.MeshFlushLog{
@@ -75,7 +75,7 @@ func TestLogDelete(t *testing.T) {
 			1: newFlushLog(now),
 			2: newFlushLog(now.Add(time.Second)),
 		},
-		clock:     mockClock,
+		// clock removed
 		metrics:   newMetrics(nil),
 		broadcast: func([]byte) {},
 	}
@@ -90,8 +90,8 @@ func TestLogDelete(t *testing.T) {
 
 func TestLogSnapshot(t *testing.T) {
 	// Check whether storing and loading the snapshot is symmetric.
-	mockClock := clock.NewMock()
-	now := mockClock.Now().UTC()
+	// mockClock removed
+	now := time.Now().UTC()
 
 	cases := []struct {
 		entries []*pb.MeshFlushLog
@@ -170,14 +170,12 @@ func TestWithMaintenance_SupportsCustomCallback(t *testing.T) {
 	var calls atomic.Int32
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		l.Maintenance(100*time.Millisecond, f.Name(), stopc, func() (int64, error) {
 			calls.Add(1)
 			return 0, nil
 		})
-	}()
+	})
 	gosched()
 
 	// Before the first tick, no maintenance executed.
@@ -233,8 +231,8 @@ func TestReplaceFile(t *testing.T) {
 }
 
 func TestStateMerge(t *testing.T) {
-	mockClock := clock.NewMock()
-	now := mockClock.Now()
+	// mockClock removed
+	now := time.Now()
 
 	// We only care about key names and timestamps for the
 	// merging logic.
@@ -292,8 +290,8 @@ func TestStateMerge(t *testing.T) {
 
 func TestStateDataCoding(t *testing.T) {
 	// Check whether encoding and decoding the data is symmetric.
-	mockClock := clock.NewMock()
-	now := mockClock.Now().UTC()
+	// mockClock removed
+	now := time.Now().UTC()
 
 	cases := []struct {
 		entries []*pb.MeshFlushLog
@@ -345,9 +343,6 @@ func TestQuery(t *testing.T) {
 	if err != nil {
 		require.NoError(t, err, "constructing flushlog failed")
 	}
-	clock := clock.NewMock()
-	// logTS := clock.Now()
-	nl.clock = clock
 
 	// no entry
 	_, err = nl.Query(1)

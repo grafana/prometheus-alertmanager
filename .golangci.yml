@@ -5,15 +5,15 @@ linters:
     - errorlint
     - godot
     - misspell
+    - modernize
     - revive
+    - sloglint
     - testifylint
   settings:
     depguard:
       rules:
         main:
           deny:
-            - pkg: sync/atomic
-              desc: "Use go.uber.org/atomic instead of sync/atomic"
             - pkg: github.com/stretchr/testify/assert
               desc: "Use github.com/stretchr/testify/require instead of github.com/stretchr/testify/assert"
             - pkg: github.com/go-kit/kit/log
@@ -66,17 +66,7 @@ linters:
       disable:
         - float-compare
         - go-require
-      enable:
-        - bool-compare
-        - compares
-        - empty
-        - error-is-as
-        - error-nil
-        - expected-actual
-        - len
-        - require-error
-        - suite-dont-use-pkg
-        - suite-extra-assert-call
+      enable-all: true
   exclusions:
     presets:
       - comments
@@ -90,6 +80,9 @@ linters:
       - linters:
           - errcheck
         path: _test.go
+      - linters:
+          - modernize
+        text: "omitzero: Omitempty has no effect on nested struct fields"
     warn-unused: true
 issues:
   max-issues-per-linter: 0

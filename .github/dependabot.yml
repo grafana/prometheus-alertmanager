@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
+    open-pull-requests-limit: 20
     schedule:
       interval: "monthly"
     groups:
@@ -21,3 +22,12 @@ updates:
     directory: "/ui/react-app"
     schedule:
       interval: "monthly"
+  - package-ecosystem: "npm"
+    directory: "/ui/mantine-ui"
+    open-pull-requests-limit: 20
+    schedule:
+      interval: "monthly"
+    groups:
+      mantine:
+        patterns:
+          - "@mantine/*"
