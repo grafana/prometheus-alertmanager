@@ -323,7 +323,7 @@ func TestSilenceSet(t *testing.T) {
 		EndsAt:   start1.Add(5 * time.Minute),
 	}
 	require.NoError(t, s.Set(sil1))
-	require.NotEqual(t, "", sil1.Id)
+	require.NotEmpty(t, sil1.Id)
 
 	want := state{
 		sil1.Id: &pb.MeshSilence{
@@ -348,7 +348,7 @@ func TestSilenceSet(t *testing.T) {
 		EndsAt:   start2.Add(1 * time.Minute),
 	}
 	require.NoError(t, s.Set(sil2))
-	require.NotEqual(t, "", sil2.Id)
+	require.NotEmpty(t, sil2.Id)
 
 	want = state{
 		sil1.Id: want[sil1.Id],
@@ -618,7 +618,7 @@ func TestSilenceNoLimits(t *testing.T) {
 		Comment:  strings.Repeat("c", 2<<9),
 	}
 	require.NoError(t, s.Set(sil))
-	require.NotEqual(t, "", sil.Id)
+	require.NotEmpty(t, sil.Id)
 }
 
 func TestSilenceUpsert(t *testing.T) {

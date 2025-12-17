@@ -36,7 +36,7 @@ func TestPairNames(t *testing.T) {
 	}
 
 	expected := []string{"name1", "name2", "name3"}
-	require.EqualValues(t, expected, pairs.Names())
+	require.Equal(t, expected, pairs.Names())
 }
 
 func TestPairValues(t *testing.T) {
@@ -47,7 +47,7 @@ func TestPairValues(t *testing.T) {
 	}
 
 	expected := []string{"value1", "value2", "value3"}
-	require.EqualValues(t, expected, pairs.Values())
+	require.Equal(t, expected, pairs.Values())
 }
 
 func TestPairsString(t *testing.T) {
@@ -67,8 +67,8 @@ func TestKVSortedPairs(t *testing.T) {
 	}
 
 	for i, p := range kv.SortedPairs() {
-		require.EqualValues(t, p.Name, expectedPairs[i].Name)
-		require.EqualValues(t, p.Value, expectedPairs[i].Value)
+		require.Equal(t, p.Name, expectedPairs[i].Name)
+		require.Equal(t, p.Value, expectedPairs[i].Value)
 	}
 
 	// validates alertname always comes first
@@ -83,8 +83,8 @@ func TestKVSortedPairs(t *testing.T) {
 	}
 
 	for i, p := range kv.SortedPairs() {
-		require.EqualValues(t, p.Name, expectedPairs[i].Name)
-		require.EqualValues(t, p.Value, expectedPairs[i].Value)
+		require.Equal(t, p.Name, expectedPairs[i].Name)
+		require.Equal(t, p.Value, expectedPairs[i].Value)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestKVRemove(t *testing.T) {
 	kv = kv.Remove([]string{"key2", "key4"})
 
 	expected := []string{"key1", "key3"}
-	require.EqualValues(t, expected, kv.Names())
+	require.Equal(t, expected, kv.Names())
 }
 
 func TestAlertsFiring(t *testing.T) {
@@ -554,7 +554,7 @@ func TestTemplateClone(t *testing.T) {
 	clone, err := tmpl.Clone()
 	require.NoError(t, err)
 	require.NotSame(t, tmpl.ExternalURL, clone.ExternalURL)
-	require.EqualValues(t, tmpl.ExternalURL, clone.ExternalURL)
+	require.Equal(t, tmpl.ExternalURL, clone.ExternalURL)
 
 	require.NoError(t, tmpl.Parse(strings.NewReader(`{{ define "base" }}TEST{{ end }}`)))
 	require.NoError(t, clone.Parse(strings.NewReader(`{{ define "cloned" }}BASE{{ end }}`)))

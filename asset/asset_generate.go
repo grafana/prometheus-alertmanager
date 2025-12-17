@@ -12,7 +12,8 @@
 // limitations under the License.
 
 //go:build ignore
-// +build ignore
+
+//nolint:govet
 
 package main
 
