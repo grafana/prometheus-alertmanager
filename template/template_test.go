@@ -554,7 +554,7 @@ func TestTemplateClone(t *testing.T) {
 	clone, err := tmpl.Clone()
 	require.NoError(t, err)
 	require.NotSame(t, tmpl.ExternalURL, clone.ExternalURL)
-	require.EqualValues(t, tmpl.ExternalURL, clone.ExternalURL)
+	require.Equal(t, tmpl.ExternalURL, clone.ExternalURL)
 
 	require.NoError(t, tmpl.Parse(strings.NewReader(`{{ define "base" }}TEST{{ end }}`)))
 	require.NoError(t, clone.Parse(strings.NewReader(`{{ define "cloned" }}BASE{{ end }}`)))

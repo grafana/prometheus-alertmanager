@@ -936,7 +936,7 @@ func TestTimeMuteStage(t *testing.T) {
 
 			if len(test.mutedBy) == 0 {
 				// All alerts should be active.
-				require.Equal(t, len(test.alerts), len(active))
+				require.Len(t, active, len(test.alerts))
 				// The metric for total suppressed notifications should not
 				// have been incremented, which means it will not be collected.
 				require.NoError(t, prom_testutil.GatherAndCompare(r, strings.NewReader("")))
@@ -1030,7 +1030,7 @@ func TestTimeActiveStage(t *testing.T) {
 
 			if len(test.mutedBy) == 0 {
 				// All alerts should be active.
-				require.Equal(t, len(test.alerts), len(active))
+				require.Len(t, active, len(test.alerts))
 				// The metric for total suppressed notifications should not
 				// have been incremented, which means it will not be collected.
 				require.NoError(t, prom_testutil.GatherAndCompare(r, strings.NewReader("")))
