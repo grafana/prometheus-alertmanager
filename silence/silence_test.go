@@ -15,6 +15,7 @@ package silence
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
@@ -2191,6 +2192,137 @@ func TestStateDecodingError(t *testing.T) {
 
 	_, err = decodeState(bytes.NewReader(msg))
 	require.Equal(t, ErrInvalidState, err)
+}
+
+func TestSilenceUpsert(t *testing.T) {
+	s, err := New(Options{
+		Retention: time.Hour,
+		Metrics:   prometheus.NewRegistry(),
+	})
+	require.NoError(t, err)
+
+	clock := quartz.NewMock(t)
+	s.clock = clock
+
+	// Inserting an invalid silence should fail.
+	checkErr(t, "invalid silence", s.Upsert(&pb.Silence{}))
+
+	// Insert a silence with the id "foo".
+	clock.Advance(time.Minute)
+	start1 := s.nowUTC()
+	sil1 := &pb.Silence{
+		Id:       "foo",
+		Matchers: []*pb.Matcher{{Name: "a", Pattern: "b"}},
+		StartsAt: start1,
+		EndsAt:   start1.Add(5 * time.Minute),
+	}
+	require.NoError(t, s.Upsert(sil1))
+	require.Equal(t, "foo", sil1.Id)
+
+	want := state{
+		sil1.Id: &pb.MeshSilence{
+			Silence: &pb.Silence{
+				Id:        "foo",
+				Matchers:  []*pb.Matcher{{Name: "a", Pattern: "b"}},
+				StartsAt:  start1,
+				EndsAt:    start1.Add(5 * time.Minute),
+				UpdatedAt: start1,
+			},
+			ExpiresAt: start1.Add(5*time.Minute + s.retention),
+		},
+	}
+	require.Equal(t, want, s.st, "unexpected state after silence creation")
+
+	// Updating the silence should fail because the new silence
+	// is invalid. The original silence should not be expired.
+	sil2 := cloneSilence(sil1)
+	sil2.Matchers = nil
+	require.EqualError(t, s.Upsert(sil2), "invalid silence: at least one matcher required")
+	sil1, err = s.QueryOne(context.Background(), QIDs(sil1.Id))
+
+	require.NoError(t, err)
+	require.Equal(t, types.SilenceStateActive, getState(sil1, s.nowUTC()))
+	require.Equal(t, want, s.st, "unexpected state after silence creation")
+
+	// Adding a comment should not expire the original silence.
+	clock.Advance(time.Minute)
+	start3 := s.nowUTC()
+	sil3 := cloneSilence(sil1)
+	sil3.Comment = "c"
+	require.NoError(t, s.Upsert(sil3))
+	require.Equal(t, sil1.Id, sil3.Id)
+
+	want[sil1.Id].Silence.Comment = "c"
+	want[sil1.Id].Silence.UpdatedAt = start3
+	require.Equal(t, want, s.st, "unexpected state after silence creation")
+
+	// Changing the matchers should expire the original silence and
+	// create a new silence.
+	clock.Advance(time.Minute)
+	start4 := s.nowUTC()
+	sil4 := cloneSilence(sil3)
+	sil4.Matchers = []*pb.Matcher{{Name: "c", Pattern: "d"}}
+	require.NoError(t, s.Upsert(sil4))
+	require.NotEqual(t, sil1.Id, sil4.Id)
+
+	clock.Advance(time.Millisecond)
+	sil1, err = s.QueryOne(context.Background(), QIDs(sil1.Id))
+	require.NoError(t, err)
+	require.Equal(t, types.SilenceStateExpired, getState(sil1, s.nowUTC()))
+
+	want = state{
+		sil1.Id: &pb.MeshSilence{
+			Silence: &pb.Silence{
+				Id:        "foo",
+				Matchers:  []*pb.Matcher{{Name: "a", Pattern: "b"}},
+				StartsAt:  start1,
+				EndsAt:    start4,
+				UpdatedAt: start4,
+				Comment:   "c",
+			},
+			ExpiresAt: start4.Add(s.retention),
+		},
+		sil4.Id: &pb.MeshSilence{
+			Silence: &pb.Silence{
+				Id:        sil4.Id,
+				Matchers:  []*pb.Matcher{{Name: "c", Pattern: "d"}},
+				StartsAt:  start4,
+				EndsAt:    start1.Add(5 * time.Minute),
+				UpdatedAt: start4,
+				Comment:   "c",
+			},
+			ExpiresAt: start1.Add(5*time.Minute + s.retention),
+		},
+	}
+	require.Equal(t, want, s.st, "unexpected state after silence creation")
+
+	// Changing the ID of the silence should upsert a new silence.
+	clock.Advance(time.Minute)
+	start5 := s.nowUTC()
+	sil5 := cloneSilence(sil4)
+	sil5.Id = "bar"
+	require.NoError(t, s.Upsert(sil5))
+	require.NotEqual(t, sil4.Id, sil5.Id)
+
+	want[sil5.Id] = &pb.MeshSilence{
+		Silence: &pb.Silence{
+			Id:        sil5.Id,
+			Matchers:  []*pb.Matcher{{Name: "c", Pattern: "d"}},
+			StartsAt:  start5,
+			EndsAt:    start1.Add(5 * time.Minute),
+			UpdatedAt: start5,
+			Comment:   "c",
+		},
+		ExpiresAt: start1.Add(5*time.Minute + s.retention),
+	}
+	require.Equal(t, want, s.st, "unexpected state after silence creation")
+
+	// Changing the ID of the silence should fail when it is invalid.
+	clock.Advance(time.Minute)
+	sil6 := cloneSilence(sil5)
+	sil6.Id = "baz"
+	sil6.EndsAt = time.Time{}
+	require.EqualError(t, s.Upsert(sil6), "invalid silence: invalid zero end timestamp")
 }
 
 // runtime.Gosched() does not "suspend" the current goroutine so there's no guarantee that the main goroutine won't

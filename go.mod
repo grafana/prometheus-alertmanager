@@ -1,6 +1,6 @@
 module github.com/prometheus/alertmanager
 
-go 1.25.1
+go 1.24.0
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5
@@ -72,6 +72,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.11 // indirect
+	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/coreos/go-systemd/v22 v22.6.0 // indirect

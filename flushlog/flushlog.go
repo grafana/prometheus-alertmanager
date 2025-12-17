@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/benbjohnson/clock"
 	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -41,6 +42,8 @@ var ErrInvalidState = errors.New("invalid state")
 
 // FlushLog holds the flush log state for groups that are active.
 type FlushLog struct {
+	clock clock.Clock
+
 	logger    *slog.Logger
 	metrics   *metrics
 	retention time.Duration
@@ -225,7 +228,8 @@ func New(o Options) (*FlushLog, error) {
 	}
 
 	l := &FlushLog{
-		retention: time.Hour * 2,
+		clock:     clock.New(),
+		retention: o.Retention,
 		logger:    slog.New(slog.DiscardHandler),
 		st:        state{},
 		broadcast: func([]byte) {},
@@ -261,6 +265,13 @@ func New(o Options) (*FlushLog, error) {
 	return l, nil
 }
 
+func (l *FlushLog) now() time.Time {
+	if l.clock != nil {
+		return l.clock.Now()
+	}
+	return time.Now()
+}
+
 // Maintenance garbage collects the flush log state at the given interval. If the snapshot
 // file is set, a snapshot is written to it afterwards.
 // Terminates on receiving from stopc.
@@ -270,7 +281,20 @@ func (l *FlushLog) Maintenance(interval time.Duration, snapf string, stopc <-cha
 		l.logger.Error("interval or stop signal are missing - not running maintenance")
 		return
 	}
-	t := time.NewTicker(interval)
+	type ticker interface {
+		Stop()
+	}
+	var t ticker
+	var tickerC <-chan time.Time
+	if l.clock != nil {
+		clockTicker := l.clock.Ticker(interval)
+		t = clockTicker
+		tickerC = clockTicker.C
+	} else {
+		timeTicker := time.NewTicker(interval)
+		t = timeTicker
+		tickerC = timeTicker.C
+	}
 	defer t.Stop()
 
 	var doMaintenance MaintenanceFunc
@@ -299,7 +323,7 @@ func (l *FlushLog) Maintenance(interval time.Duration, snapf string, stopc <-cha
 
 	runMaintenance := func(do func() (int64, error)) error {
 		l.metrics.maintenanceTotal.Inc()
-		start := time.Now().UTC()
+		start := l.now().UTC()
 		l.logger.Debug("Running maintenance")
 		size, err := do()
 		l.metrics.snapshotSize.Set(float64(size))
@@ -316,7 +340,7 @@ Loop:
 		select {
 		case <-stopc:
 			break Loop
-		case <-t.C:
+		case <-tickerC:
 			if err := runMaintenance(doMaintenance); err != nil {
 				l.logger.Error("Running maintenance failed", "err", err)
 			}
@@ -344,7 +368,7 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time
 		}
 	}
 
-	now := time.Now()
+	now := l.now()
 
 	expiresAt := now.Add(l.retention)
 	if expiry > 0 && expiry < l.retention {
@@ -363,7 +387,7 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time
 	if err != nil {
 		return err
 	}
-	l.st.merge(e, time.Now())
+	l.st.merge(e, l.now())
 	l.broadcast(b)
 
 	return nil
@@ -393,10 +417,10 @@ func (l *FlushLog) Delete(groupFingerprint uint64) error {
 
 // GC implements the Log interface.
 func (l *FlushLog) GC() (int, error) {
-	start := time.Now()
+	start := l.now()
 	defer func() { l.metrics.gcDuration.Observe(time.Since(start).Seconds()) }()
 
-	now := time.Now()
+	now := l.now()
 	var n int
 
 	l.mtx.Lock()
@@ -414,7 +438,7 @@ func (l *FlushLog) GC() (int, error) {
 
 // Query implements the Log interface.
 func (l *FlushLog) Query(groupFingerprint uint64) ([]*pb.FlushLog, error) {
-	start := time.Now()
+	start := l.now()
 	l.metrics.queriesTotal.Inc()
 
 	entries, err := func() ([]*pb.FlushLog, error) {
@@ -454,7 +478,7 @@ func (l *FlushLog) loadSnapshot(r io.Reader) error {
 
 // Snapshot implements the Log interface.
 func (l *FlushLog) Snapshot(w io.Writer) (int64, error) {
-	start := time.Now()
+	start := l.now()
 	defer func() { l.metrics.snapshotDuration.Observe(time.Since(start).Seconds()) }()
 
 	l.mtx.RLock()
@@ -484,7 +508,7 @@ func (l *FlushLog) Merge(b []byte) error {
 	}
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
-	now := time.Now()
+	now := l.now()
 
 	for _, e := range st {
 		if merged := l.st.merge(e, now); merged && !cluster.OversizedMessage(b) {
