@@ -224,7 +224,7 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				err: errors.New("mock error"),
 			},
 			expErr:      "error querying log entry: mock error",
-			expDuration: 0,
+			expDuration: time.Millisecond * 10,
 		},
 		{
 			name: "first flush = now - groupInterval",
@@ -236,7 +236,7 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				},
 			},
 			now:         now,
-			expDuration: 0,
+			expDuration: time.Millisecond * 10,
 		},
 		{
 			name: "first flush = now - (groupInterval/2)",
