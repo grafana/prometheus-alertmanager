@@ -132,34 +132,49 @@ func (st *syncTimer) getFirstFlushTime() (*time.Time, error) {
 	return &ft, nil
 }
 
-func (st *syncTimer) getNextTick(now time.Time) (time.Duration, error) {
+func (st *syncTimer) getNextTick(now time.Time) (time.Duration, bool, error) {
+	isPosZero := st.position() == 0
+
 	ft, err := st.getFirstFlushTime()
 	if err != nil {
-		return st.groupInterval, err
+		isNotFound := errors.Is(err, flushlog.ErrNotFound)
+		return st.groupInterval, isPosZero && isNotFound, err
 	}
 
 	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
 
-	interval := time.Duration(st.nextFlushIteration(*ft, now)) * st.groupInterval
-	if next := ft.Add(interval); next.After(now) {
-		return next.Sub(now), nil
+	next := ft.Add(time.Duration(st.nextFlushIteration(*ft, now)) * st.groupInterval)
+	nextTick := next.Sub(now)
+	if !next.After(now) {
+		// edge case, now is exactly on the boundary (shouldn't happen)
+		// subtract overshoot to maintain interval alignment
+		delta := now.Sub(next)
+		nextTick = st.groupInterval - delta
 	}
 
-	return st.groupInterval, nil
+	// minimize gossip by logging once per expiry period
+	// - expiry is based on the time given by the flush log clock and is set on the mesh struct.
+	// - we don't have any of that here, so based on flush time (which is before the flushlog clock time)
+	// the idea is to keep the logging frequency low but also ensure that entries that shouldn't expire don't
+	// (on expire, the flushlog gets recreated but that introduces drift / de-syncs the flushes)
+	closeToExpiry := next.Add(st.groupInterval * 2).After(ft.Add(st.flushLogExpiry()))
+
+	return nextTick, isPosZero && closeToExpiry, nil
 }
 
 func (st *syncTimer) Reset(now time.Time) bool {
-	reset, err := st.getNextTick(now)
-	if err != nil {
-		if errors.Is(err, flushlog.ErrNotFound) {
-			st.logFlush(now)
-		} else {
-			level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
-		}
+	nextTick, shouldLog, err := st.getNextTick(now)
+	if err != nil && !errors.Is(err, flushlog.ErrNotFound) {
+		level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
 	}
 
-	level.Debug(st.logger).Log("msg", "calculated next tick", "reset", reset)
-	return st.t.Reset(reset)
+	level.Debug(st.logger).Log("msg", "calculated next tick", "next_tick", nextTick, "should_log", shouldLog)
+
+	if shouldLog {
+		st.logFlush(now)
+	}
+
+	return st.t.Reset(nextTick)
 }
 
 func (st *syncTimer) Flush() bool {
@@ -179,15 +194,16 @@ func (st *syncTimer) C() <-chan time.Time {
 	return st.t.C
 }
 
-func (st *syncTimer) logFlush(now time.Time) {
-	if st.position() != 0 {
-		return
-	}
+func (st *syncTimer) flushLogExpiry() time.Duration {
+	// minimum expiry of 24 hours to avoid excessive log churn
+	return max(st.groupInterval*2, time.Hour*24)
+}
 
+func (st *syncTimer) logFlush(now time.Time) {
 	if err := st.flushLog.Log(
 		st.groupFingerprint,
 		now,
-		st.groupInterval*2,
+		st.flushLogExpiry(),
 	); err != nil {
 		// log the error and continue
 		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)

@@ -212,22 +212,36 @@ func TestSyncTimer_getFirstFlushTime(t *testing.T) {
 func TestSyncTimer_getNextTick(t *testing.T) {
 	now := time.Now()
 	tt := []struct {
-		name        string
-		queryCall   mockQueryCall
-		now         time.Time
-		expDuration time.Duration
-		expErr      string
+		name         string
+		queryCall    mockQueryCall
+		now          time.Time
+		position     int
+		expDuration  time.Duration
+		expErr       string
+		expShouldLog bool
 	}{
 		{
-			name: "getFirstFlushTime returns error",
+			name: "getFirstFlushTime returns unhandled error",
 			queryCall: mockQueryCall{
 				err: errors.New("mock error"),
 			},
-			expErr:      "error querying log entry: mock error",
-			expDuration: time.Millisecond * 10,
+			position:     0,
+			expErr:       "error querying log entry: mock error",
+			expDuration:  time.Millisecond * 10,
+			expShouldLog: false,
 		},
 		{
-			name: "first flush = now - groupInterval",
+			name: "getFirstFlushTime returns not found error",
+			queryCall: mockQueryCall{
+				err: flushlog.ErrNotFound,
+			},
+			position:     0,
+			expErr:       "not found",
+			expDuration:  time.Millisecond * 10,
+			expShouldLog: true,
+		},
+		{
+			name: "next.After(now) == false",
 			queryCall: mockQueryCall{
 				res: []*flushlogpb.FlushLog{
 					{
@@ -235,8 +249,10 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:         now,
-			expDuration: time.Millisecond * 10,
+			now:          now,
+			position:     0,
+			expDuration:  time.Millisecond * 10,
+			expShouldLog: false,
 		},
 		{
 			name: "first flush = now - (groupInterval/2)",
@@ -247,8 +263,9 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:         now,
-			expDuration: time.Millisecond * 5,
+			now:          now,
+			expDuration:  time.Millisecond * 5,
+			expShouldLog: false,
 		},
 		{
 			name: "first flush = now - (groupInterval*1.5)",
@@ -259,8 +276,37 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:         now,
-			expDuration: time.Millisecond * 5,
+			now:          now,
+			expDuration:  time.Millisecond * 5,
+			expShouldLog: false,
+		},
+		{
+			name: "next flush after expiry, position 0",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 5),
+					},
+				},
+			},
+			now:          now.Add(24 * time.Hour).Add(-time.Millisecond * 10),
+			position:     0,
+			expDuration:  time.Millisecond * 5,
+			expShouldLog: true,
+		},
+		{
+			name: "next flush after expiry, position 1",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 5),
+					},
+				},
+			},
+			now:          now.Add(24 * time.Hour).Add(-time.Millisecond * 5),
+			position:     1,
+			expDuration:  time.Millisecond * 10,
+			expShouldLog: false,
 		},
 	}
 
@@ -271,14 +317,18 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				flushLog:      flushlog,
 				logger:        log.NewNopLogger(),
 				groupInterval: time.Millisecond * 10,
+				position: func() int {
+					return tc.position
+				},
 			}
-			ft, err := st.getNextTick(tc.now)
+			ft, shouldLog, err := st.getNextTick(tc.now)
 			require.Equal(t, tc.expDuration, ft)
 			if tc.expErr == "" {
 				require.NoError(t, err)
 			} else {
 				require.Equal(t, tc.expErr, err.Error())
 			}
+			require.Equal(t, tc.expShouldLog, shouldLog)
 		})
 	}
 }
