@@ -147,11 +147,16 @@ func (s state) clone() state {
 // not. This information is used to decide to gossip the message further.
 func (s state) merge(e *pb.MeshFlushLog, now time.Time) bool {
 	if e.ExpiresAt.IsZero() { // handle delete broadcasts
-		if _, ok := s[e.FlushLog.GroupFingerprint]; !ok {
+		if prev, ok := s[e.FlushLog.GroupFingerprint]; !ok {
 			return false
+		} else if prev.FlushLog.Timestamp.Before(e.FlushLog.Timestamp) {
+			// only delete if the incoming entry is newer
+			// since on expire the flushlog gets recreated, this can lead to a race condition
+			// causing the previous entry delete message to arrive after the new entry
+			delete(s, e.FlushLog.GroupFingerprint)
+			return true
 		}
-		delete(s, e.FlushLog.GroupFingerprint)
-		return true
+		return false
 	} else if e.ExpiresAt.Before(now) {
 		return false
 	}
