@@ -288,12 +288,12 @@ func TestStateMerge(t *testing.T) {
 			final: state{},
 		},
 		{
-			name: "doesn't delete when timestamp is same or before previous entry",
+			name: "doesn't delete when timestamp is before previous entry",
 			a: state{
 				1: newFlushLog(1, now, exp),
 			},
 			b: state{
-				1: newFlushLog(1, now, time.Time{}),
+				1: newFlushLog(1, now.Add(time.Minute*-1), time.Time{}),
 			},
 			final: state{
 				1: newFlushLog(1, now, exp),

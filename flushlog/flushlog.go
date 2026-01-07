@@ -149,7 +149,7 @@ func (s state) merge(e *pb.MeshFlushLog, now time.Time) bool {
 	if e.ExpiresAt.IsZero() { // handle delete broadcasts
 		if prev, ok := s[e.FlushLog.GroupFingerprint]; !ok {
 			return false
-		} else if prev.FlushLog.Timestamp.Before(e.FlushLog.Timestamp) {
+		} else if prev.FlushLog.Timestamp.Before(e.FlushLog.Timestamp) || prev.FlushLog.Timestamp.Equal(e.FlushLog.Timestamp) {
 			// only delete if the incoming entry is newer
 			// since on expire the flushlog gets recreated, this can lead to a race condition
 			// causing the previous entry delete message to arrive after the new entry
