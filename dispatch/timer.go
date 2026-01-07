@@ -51,7 +51,7 @@ func standardTimerFactory(
 type Timer interface {
 	C() <-chan time.Time
 	Reset(time.Time) bool
-	Stop() bool
+	Stop(bool) bool
 	Flush() bool
 }
 
@@ -72,7 +72,7 @@ func (sat *standardTimer) Flush() bool {
 	return sat.t.Reset(0)
 }
 
-func (sat *standardTimer) Stop() bool {
+func (sat *standardTimer) Stop(_ bool) bool {
 	return sat.t.Stop()
 }
 
@@ -181,9 +181,9 @@ func (st *syncTimer) Flush() bool {
 	return st.t.Reset(0)
 }
 
-func (st *syncTimer) Stop() bool {
-	if st.position() == 0 {
-		if err := st.flushLog.Delete(st.groupFingerprint); err != nil {
+func (st *syncTimer) Stop(cleanState bool) bool {
+	if st.position() == 0 && cleanState {
+		if err := st.flushLog.Delete(st.groupFingerprint); err != nil && !errors.Is(err, flushlog.ErrNotFound) {
 			level.Warn(st.logger).Log("msg", "failed to delete flush log entry", "err", err)
 		}
 	}
