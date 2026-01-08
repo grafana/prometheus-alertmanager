@@ -162,8 +162,8 @@ func (st *syncTimer) getNextTick(now time.Time) (time.Duration, bool, error) {
 	return nextTick, isPosZero && closeToExpiry, nil
 }
 
-func (st *syncTimer) Reset(now time.Time) bool {
-	nextTick, shouldLog, err := st.getNextTick(now)
+func (st *syncTimer) Reset(pipelineTime time.Time) bool {
+	nextTick, shouldLog, err := st.getNextTick(time.Now())
 	if err != nil && !errors.Is(err, flushlog.ErrNotFound) {
 		level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
 	}
@@ -171,7 +171,7 @@ func (st *syncTimer) Reset(now time.Time) bool {
 	level.Debug(st.logger).Log("msg", "calculated next tick", "next_tick", nextTick, "should_log", shouldLog)
 
 	if shouldLog {
-		st.logFlush(now)
+		st.logFlush(pipelineTime)
 	}
 
 	return st.t.Reset(nextTick)
