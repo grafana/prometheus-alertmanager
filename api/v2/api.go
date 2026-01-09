@@ -475,29 +475,25 @@ func receiversMatchFilter(receivers []string, filter *regexp.Regexp) bool {
 }
 
 func alertMatchesFilterLabels(a *prometheus_model.Alert, matchers []*labels.Matcher) bool {
-	sms := make(map[string]string)
-	for name, value := range a.Labels {
-		sms[string(name)] = string(value)
-	}
-	return matchFilterLabels(matchers, sms)
+	return matchFilterLabels(matchers, a.Labels)
 }
 
-func matchFilterLabels(matchers []*labels.Matcher, sms map[string]string) bool {
+func matchFilterLabels(matchers []*labels.Matcher, sms prometheus_model.LabelSet) bool {
 	for _, m := range matchers {
-		v, prs := sms[m.Name]
+		v, prs := sms[prometheus_model.LabelName(m.Name)]
 		switch m.Type {
 		case labels.MatchNotRegexp, labels.MatchNotEqual:
 			if m.Value == "" && prs {
 				continue
 			}
-			if !m.Matches(v) {
+			if !m.Matches(string(v)) {
 				return false
 			}
 		default:
 			if m.Value == "" && !prs {
 				continue
 			}
-			if !m.Matches(v) {
+			if !m.Matches(string(v)) {
 				return false
 			}
 		}

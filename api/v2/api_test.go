@@ -506,7 +506,7 @@ func TestAlertToOpenAPIAlert(t *testing.T) {
 }
 
 func TestMatchFilterLabels(t *testing.T) {
-	sms := map[string]string{
+	sms := model.LabelSet{
 		"foo": "bar",
 	}
 
