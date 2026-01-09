@@ -321,7 +321,7 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					return tc.position
 				},
 			}
-			ft, shouldLog, err := st.getNextTick(tc.now)
+			ft, shouldLog, err := st.getNextTick(tc.now, tc.now)
 			require.Equal(t, tc.expDuration, ft)
 			if tc.expErr == "" {
 				require.NoError(t, err)

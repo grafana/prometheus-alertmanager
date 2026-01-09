@@ -76,6 +76,9 @@ func (sat *standardTimer) Stop(_ bool) bool {
 	return sat.t.Stop()
 }
 
+// syncTimerMaxDrift defines the maximum allowed drift from the expected schedule.
+const syncTimerMaxDrift = time.Second * 2
+
 type syncTimer struct {
 	t                *time.Timer
 	flushLog         FlushLog
@@ -132,7 +135,7 @@ func (st *syncTimer) getFirstFlushTime() (*time.Time, error) {
 	return &ft, nil
 }
 
-func (st *syncTimer) getNextTick(now time.Time) (time.Duration, bool, error) {
+func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, bool, error) {
 	isPosZero := st.position() == 0
 
 	ft, err := st.getFirstFlushTime()
@@ -141,9 +144,8 @@ func (st *syncTimer) getNextTick(now time.Time) (time.Duration, bool, error) {
 		return st.groupInterval, isPosZero && isNotFound, err
 	}
 
-	level.Debug(st.logger).Log("msg", "found flush log entry", "flush_time", ft)
-
-	next := ft.Add(time.Duration(st.nextFlushIteration(*ft, now)) * st.groupInterval)
+	it := st.nextFlushIteration(*ft, now)
+	next := ft.Add(time.Duration(it) * st.groupInterval)
 	nextTick := next.Sub(now)
 	if !next.After(now) {
 		// edge case, now is exactly on the boundary (shouldn't happen)
@@ -152,23 +154,44 @@ func (st *syncTimer) getNextTick(now time.Time) (time.Duration, bool, error) {
 		nextTick = st.groupInterval - delta
 	}
 
+	// Calculate drift from expected schedule
+	// The last aligned time was one interval before next
+	lastAligned := next.Add(-st.groupInterval)
+	drift := now.Sub(lastAligned).Abs()
+
+	// Determine if significantly drifted (e.g., > 1 second)
+	isDrifted := drift > syncTimerMaxDrift
+
 	// minimize gossip by logging once per expiry period
 	// - expiry is based on the time given by the flush log clock and is set on the mesh struct.
 	// - we don't have any of that here, so based on flush time (which is before the flushlog clock time)
 	// the idea is to keep the logging frequency low but also ensure that entries that shouldn't expire don't
 	// (on expire, the flushlog gets recreated but that introduces drift / de-syncs the flushes)
 	closeToExpiry := next.Add(st.groupInterval * 2).After(ft.Add(st.flushLogExpiry()))
+	shouldLog := isPosZero && closeToExpiry
 
-	return nextTick, isPosZero && closeToExpiry, nil
+	level.Debug(st.logger).Log(
+		"msg", "calculated next tick",
+		"next_tick", nextTick,
+		"should_log", shouldLog,
+		"flush_time", ft,
+		"now", now,
+		"pipeline_time", pipelineTime,
+		"last_aligned", lastAligned,
+		"drift", drift,
+		"is_drifted", isDrifted,
+		"ring_position", st.position(),
+		"iteration", it,
+	)
+
+	return nextTick, shouldLog, nil
 }
 
 func (st *syncTimer) Reset(pipelineTime time.Time) bool {
-	nextTick, shouldLog, err := st.getNextTick(time.Now())
+	nextTick, shouldLog, err := st.getNextTick(time.Now(), pipelineTime)
 	if err != nil && !errors.Is(err, flushlog.ErrNotFound) {
 		level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
 	}
-
-	level.Debug(st.logger).Log("msg", "calculated next tick", "next_tick", nextTick, "should_log", shouldLog)
 
 	if shouldLog {
 		st.logFlush(pipelineTime)
