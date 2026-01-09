@@ -98,10 +98,10 @@ func (sat *standardTimer) Stop(_ bool) bool {
 }
 
 const (
-	// syncTimerMaxDrift defines the maximum drift for the pod to be considered drifted (out of sync).
+	// Defines the maximum drift for the pod to be considered drifted (out of sync).
 	syncTimerMaxDrift = time.Second * 1
-	// syncTimerMinNextTick defines the minimum next tick duration.
-	// if it's lower than or equal to that, it's to groupInterval to avoid tight loops.
+
+	// Defines the minimum next tick duration.
 	syncTimerMinNextTick = time.Second * 1
 )
 
