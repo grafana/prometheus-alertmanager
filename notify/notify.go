@@ -435,7 +435,7 @@ func createReceiverStage(
 			Idx:         uint32(integrations[i].Index()),
 		}
 		var s MultiStage
-		s = append(s, NewWaitStage(wait))
+		// s = append(s, NewWaitStage(wait))
 		s = append(s, NewDedupStage(integrations[i], notificationLog, recv))
 		s = append(s, NewRetryStage(integrations[i], name, metrics))
 		s = append(s, NewSetNotifiesStage(notificationLog, recv))
