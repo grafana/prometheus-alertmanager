@@ -308,6 +308,20 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 			expDuration:  time.Millisecond * 10,
 			expShouldLog: false,
 		},
+		{
+			name: "when nextTick is equal to minNextTick",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 5),
+					},
+				},
+			},
+			now:          now.Add(-time.Millisecond * 2),
+			position:     1,
+			expDuration:  time.Millisecond * 7,
+			expShouldLog: false,
+		},
 	}
 
 	for _, tc := range tt {
@@ -320,6 +334,7 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				position: func() int {
 					return tc.position
 				},
+				minNextTick: time.Millisecond * 4,
 			}
 			ft, shouldLog, err := st.getNextTick(tc.now, tc.now)
 			require.Equal(t, tc.expDuration, ft)

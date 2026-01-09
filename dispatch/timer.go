@@ -97,8 +97,13 @@ func (sat *standardTimer) Stop(_ bool) bool {
 	return sat.t.Stop()
 }
 
-// syncTimerMaxDrift defines the maximum allowed drift from the expected schedule.
-const syncTimerMaxDrift = time.Second * 2
+const (
+	// syncTimerMaxDrift defines the maximum drift for the pod to be considered drifted (out of sync).
+	syncTimerMaxDrift = time.Second * 1
+	// syncTimerMinNextTick defines the minimum next tick duration.
+	// if it's lower than or equal to that, it's to groupInterval to avoid tight loops.
+	syncTimerMinNextTick = time.Second * 1
+)
 
 type syncTimer struct {
 	t                *time.Timer
@@ -108,6 +113,7 @@ type syncTimer struct {
 	groupFingerprint uint64
 	groupInterval    time.Duration
 	groupWait        time.Duration
+	minNextTick      time.Duration
 }
 
 type FlushLog interface {
@@ -134,6 +140,7 @@ func NewSyncTimerFactory(
 			groupInterval:    o.GroupInterval,
 			groupFingerprint: groupFingerprint,
 			groupWait:        o.GroupWait,
+			minNextTick:      syncTimerMinNextTick,
 		}
 
 		return st
@@ -177,6 +184,21 @@ func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, bo
 		nextTick = st.groupInterval - delta
 	}
 
+	// if nextTick is too close, skip to the next interval
+	// this helps avoid tight loops in case of clock drift or delays
+	// and helps the drifted pod synchronize faster
+	if nextTick <= st.minNextTick {
+		level.Warn(st.logger).Log(
+			"msg", "skipping iteration due to too close next tick",
+			"skipped_iteration", it,
+			"skipped_next", next,
+			"skipped_next_tick", nextTick,
+		)
+		it++
+		next = next.Add(st.groupInterval)
+		nextTick = next.Sub(now)
+	}
+
 	// Calculate drift from expected schedule
 	// The last aligned time was one interval before next
 	lastAligned := next.Add(-st.groupInterval)
@@ -196,6 +218,7 @@ func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, bo
 	level.Debug(st.logger).Log(
 		"msg", "calculated next tick",
 		"next_tick", nextTick,
+		"next", next,
 		"should_log", shouldLog,
 		"flush_time", ft,
 		"now", now,
