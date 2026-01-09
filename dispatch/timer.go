@@ -239,10 +239,8 @@ func (st *syncTimer) nextFlushIteration(firstFlush, now time.Time) int64 {
 		return 0
 	}
 
-	// convert it all to milliseconds
-	ns := now.UnixMilli()
-	fs := firstFlush.UnixMilli()
-	gs := st.groupInterval.Milliseconds()
+	elapsed := now.Sub(firstFlush)
+	intervals := float64(elapsed) / float64(st.groupInterval)
 
-	return int64(math.Ceil(float64(ns-fs) / float64(gs)))
+	return int64(math.Ceil(intervals))
 }

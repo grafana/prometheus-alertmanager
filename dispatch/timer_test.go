@@ -336,64 +336,103 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 func TestSyncTimer_nextFlushIteration(t *testing.T) {
 	now := time.Now()
 	tt := []struct {
-		name         string
-		firstFlush   time.Time
-		now          time.Time
-		expIteration int64
+		name          string
+		firstFlush    time.Time
+		now           time.Time
+		groupInterval time.Duration
+		expIteration  int64
 	}{
 		{
-			name:         "now < flush",
-			now:          now.Add(-time.Millisecond * 10),
-			firstFlush:   now,
-			expIteration: 0,
+			name:          "now < flush",
+			now:           now.Add(-time.Millisecond * 10),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  0,
 		},
 		{
-			name:         "now = flush",
-			now:          now,
-			firstFlush:   now,
-			expIteration: 0,
+			name:          "now = flush",
+			now:           now,
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  0,
 		},
 		{
-			name:         "now = flush+1",
-			now:          now.Add(time.Millisecond * 1),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+1",
+			now:           now.Add(time.Millisecond * 1),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+3",
-			now:          now.Add(time.Millisecond * 3),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+3",
+			now:           now.Add(time.Millisecond * 3),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+7",
-			now:          now.Add(time.Millisecond * 7),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+7",
+			now:           now.Add(time.Millisecond * 7),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+10",
-			now:          now.Add(time.Millisecond * 10),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+10",
+			now:           now.Add(time.Millisecond * 10),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+11",
-			now:          now.Add(time.Millisecond * 11),
-			firstFlush:   now,
-			expIteration: 2,
+			name:          "now = flush+11",
+			now:           now.Add(time.Millisecond * 11),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  2,
 		},
 		{
-			name:         "now = flush+19",
-			now:          now.Add(time.Millisecond * 19),
-			firstFlush:   now,
-			expIteration: 2,
+			name:          "now = flush+19",
+			now:           now.Add(time.Millisecond * 19),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  2,
 		},
 		{
-			name:         "now = flush+22",
-			now:          now.Add(time.Millisecond * 22),
-			firstFlush:   now,
-			expIteration: 3,
+			name:          "now = flush+22",
+			now:           now.Add(time.Millisecond * 22),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  3,
+		},
+		// Test cases for sub-millisecond precision
+		{
+			name:          "now just past alignment with sub-millisecond precision",
+			firstFlush:    time.Date(2026, 1, 9, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 31, 30, 128547621, time.UTC), // 167µs past alignment
+			groupInterval: 1 * time.Minute,
+			expIteration:  1, // Should return NEXT iteration, not current
+		},
+		{
+			name:          "now exactly on alignment with nanosecond precision",
+			firstFlush:    time.Date(2026, 1, 9, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 41, 30, 128379875, time.UTC), // Exactly 10 intervals later
+			groupInterval: 1 * time.Minute,
+			expIteration:  10, // Should return current iteration (0) since we're exactly on alignment
+		},
+		{
+			name:          "real-world case: iteration 1419 at 13:10:30.128",
+			firstFlush:    time.Date(2026, 1, 8, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 10, 30, 128547621, time.UTC), // ~23h 39min later
+			groupInterval: 1 * time.Minute,
+			expIteration:  1420, // Should return NEXT iteration (1420), not current (1419)
+		},
+		{
+			name:          "sub-millisecond before alignment",
+			firstFlush:    time.Date(2026, 1, 9, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 31, 40, 128200000, time.UTC), // 179µs before next alignment
+			groupInterval: 1 * time.Minute,
+			expIteration:  1, // Should return NEXT iteration
 		},
 	}
 
@@ -401,7 +440,7 @@ func TestSyncTimer_nextFlushIteration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &syncTimer{
 				logger:        log.NewNopLogger(),
-				groupInterval: time.Millisecond * 10,
+				groupInterval: tc.groupInterval,
 			}
 			fi := st.nextFlushIteration(tc.firstFlush, tc.now)
 			require.Equal(t, tc.expIteration, fi)
