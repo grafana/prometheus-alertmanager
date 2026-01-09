@@ -197,7 +197,7 @@ func (api *API) getStatusHandler(params general_ops.GetStatusParams) middleware.
 	if api.peer != nil {
 		status := api.peer.Status()
 
-		peers := []*open_api_models.PeerStatus{}
+		peers := make([]*open_api_models.PeerStatus, 0, len(api.peer.Peers()))
 		for _, n := range api.peer.Peers() {
 			address := n.Address()
 			name := n.Name()
