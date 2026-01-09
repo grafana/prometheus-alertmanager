@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 	"time"
 
 	"github.com/prometheus/alertmanager/flushlog"
@@ -42,8 +43,9 @@ func standardTimerFactory(
 	_ uint64,
 ) Timer {
 	return &standardTimer{
-		time.NewTimer(o.GroupWait),
-		o.GroupInterval,
+		t:             time.NewTimer(o.GroupWait),
+		groupInterval: o.GroupInterval,
+		groupWait:     o.GroupWait,
 	}
 }
 
@@ -53,11 +55,15 @@ type Timer interface {
 	Reset(time.Time) bool
 	Stop(bool) bool
 	Flush() bool
+	ShouldFlush(time.Time) bool
 }
 
 type standardTimer struct {
 	t             *time.Timer
 	groupInterval time.Duration
+	groupWait     time.Duration
+	hasFlushed    bool
+	mtx           sync.RWMutex
 }
 
 func (sat *standardTimer) C() <-chan time.Time {
@@ -65,11 +71,26 @@ func (sat *standardTimer) C() <-chan time.Time {
 }
 
 func (sat *standardTimer) Reset(_ time.Time) bool {
-	return sat.t.Reset(sat.groupInterval)
+	return sat.reset(sat.groupInterval)
+}
+
+func (sat *standardTimer) ShouldFlush(alertStartsAt time.Time) bool {
+	sat.mtx.RLock()
+	defer sat.mtx.RUnlock()
+
+	return !sat.hasFlushed && alertStartsAt.Add(sat.groupWait).Before(time.Now())
 }
 
 func (sat *standardTimer) Flush() bool {
-	return sat.t.Reset(0)
+	return sat.reset(0)
+}
+
+func (sat *standardTimer) reset(d time.Duration) bool {
+	sat.mtx.Lock()
+	sat.hasFlushed = true
+	sat.mtx.Unlock()
+
+	return sat.t.Reset(d)
 }
 
 func (sat *standardTimer) Stop(_ bool) bool {
@@ -86,6 +107,7 @@ type syncTimer struct {
 	logger           log.Logger
 	groupFingerprint uint64
 	groupInterval    time.Duration
+	groupWait        time.Duration
 }
 
 type FlushLog interface {
@@ -111,6 +133,7 @@ func NewSyncTimerFactory(
 			logger:           l,
 			groupInterval:    o.GroupInterval,
 			groupFingerprint: groupFingerprint,
+			groupWait:        o.GroupWait,
 		}
 
 		return st
@@ -198,6 +221,11 @@ func (st *syncTimer) Reset(pipelineTime time.Time) bool {
 	}
 
 	return st.t.Reset(nextTick)
+}
+
+func (st *syncTimer) ShouldFlush(alertStartsAt time.Time) bool {
+	_, err := st.getFirstFlushTime()
+	return err != nil && alertStartsAt.Add(st.groupWait).Before(time.Now())
 }
 
 func (st *syncTimer) Flush() bool {
