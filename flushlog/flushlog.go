@@ -347,17 +347,9 @@ Loop:
 	}
 }
 
-func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time.Duration) error {
+func (l *FlushLog) Log(groupFingerprint uint64, flushTime, expiryThreshold time.Time, expiry time.Duration) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
-
-	if prevle, ok := l.st[groupFingerprint]; ok {
-		// FlushLog already exists, only overwrite if timestamp is newer.
-		// This may happen with raciness or clock-drift across AM nodes.
-		if prevle.FlushLog.Timestamp.After(flushTime) {
-			return nil
-		}
-	}
 
 	now := l.now()
 
@@ -372,6 +364,23 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime time.Time, expiry time
 			Timestamp:        flushTime,
 		},
 		ExpiresAt: expiresAt,
+	}
+
+	if prevle, ok := l.st[groupFingerprint]; ok {
+		// minimize gossip by logging once per expiry period
+		// - expiry is based on the time given by the flush log clock and is set on the mesh struct.
+		// - we don't have any of that here, so based on flush time (which is before the flushlog clock time)
+		// the idea is to keep the logging frequency low but also ensure that entries that shouldn't expire don't
+		// (on expire, the flushlog gets recreated but that introduces drift / de-syncs the flushes)
+		closeToExpiry := expiryThreshold.After(prevle.ExpiresAt)
+
+		// FlushLog already exists, only overwrite if timestamp is newer.
+		// This may happen with raciness or clock-drift across AM nodes.
+		if prevle.FlushLog.Timestamp.After(flushTime) || !closeToExpiry {
+			return nil
+		} else if closeToExpiry {
+			e.FlushLog = prevle.FlushLog // keep previous timestamp
+		}
 	}
 
 	b, err := marshalMeshFlushLog(e)

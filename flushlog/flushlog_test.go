@@ -380,7 +380,7 @@ func TestQuery(t *testing.T) {
 	require.EqualError(t, err, "not found")
 
 	now := time.Now()
-	err = nl.Log(1, now, 0)
+	err = nl.Log(1, now, now, 0)
 	require.NoError(t, err, "logging flush failed")
 
 	entries, err := nl.Query(1)
