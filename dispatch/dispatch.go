@@ -525,12 +525,13 @@ func (ag *aggrGroup) run(nf notifyFunc) {
 }
 
 func (ag *aggrGroup) stop() {
-	// stop the timer and clean state (aggrGroup is empty)
-	ag.timer.Stop(true)
 	// Calling cancel will terminate all in-process notifications
 	// and the run() loop.
 	ag.cancel()
 	<-ag.done
+
+	// stop the timer once `run` has exited to make sure timer state cleanup is safe
+	ag.timer.Stop(true)
 }
 
 // insert inserts the alert into the aggregation group.
