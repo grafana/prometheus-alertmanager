@@ -215,19 +215,32 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 		name        string
 		queryCall   mockQueryCall
 		now         time.Time
-		expDuration time.Duration
+		expNextTick time.Duration
+		expNext     time.Time
 		expErr      string
 	}{
 		{
-			name: "getFirstFlushTime returns error",
+			name: "getFirstFlushTime returns unhandled error",
 			queryCall: mockQueryCall{
 				err: errors.New("mock error"),
 			},
+			now:         now,
 			expErr:      "error querying log entry: mock error",
-			expDuration: 0,
+			expNextTick: time.Millisecond * 10,
+			expNext:     now.Add(time.Millisecond * 10),
 		},
 		{
-			name: "first flush = now - groupInterval",
+			name: "getFirstFlushTime returns not found error",
+			queryCall: mockQueryCall{
+				err: flushlog.ErrNotFound,
+			},
+			now:         now,
+			expErr:      "not found",
+			expNextTick: time.Millisecond * 10,
+			expNext:     now.Add(time.Millisecond * 10),
+		},
+		{
+			name: "next.After(now) == false",
 			queryCall: mockQueryCall{
 				res: []*flushlogpb.FlushLog{
 					{
@@ -236,7 +249,8 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				},
 			},
 			now:         now,
-			expDuration: 0,
+			expNextTick: time.Millisecond * 10,
+			expNext:     now.Add(time.Millisecond * 10),
 		},
 		{
 			name: "first flush = now - (groupInterval/2)",
@@ -248,7 +262,8 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				},
 			},
 			now:         now,
-			expDuration: time.Millisecond * 5,
+			expNextTick: time.Millisecond * 5,
+			expNext:     now.Add(time.Millisecond * 5),
 		},
 		{
 			name: "first flush = now - (groupInterval*1.5)",
@@ -260,7 +275,21 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				},
 			},
 			now:         now,
-			expDuration: time.Millisecond * 5,
+			expNextTick: time.Millisecond * 5,
+			expNext:     now.Add(time.Millisecond * 5),
+		},
+		{
+			name: "next flush after expiry",
+			queryCall: mockQueryCall{
+				res: []*flushlogpb.FlushLog{
+					{
+						Timestamp: now.Add(-time.Millisecond * 5),
+					},
+				},
+			},
+			now:         now.Add(24 * time.Hour).Add(-time.Millisecond * 10),
+			expNextTick: time.Millisecond * 5,
+			expNext:     now.Add(24 * time.Hour).Add(-time.Millisecond * 5),
 		},
 	}
 
@@ -271,9 +300,13 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				flushLog:      flushlog,
 				logger:        log.NewNopLogger(),
 				groupInterval: time.Millisecond * 10,
+				position: func() int {
+					return 0
+				},
 			}
-			ft, err := st.getNextTick(tc.now)
-			require.Equal(t, tc.expDuration, ft)
+			nextTick, next, err := st.getNextTick(tc.now, tc.now)
+			require.Equal(t, tc.expNextTick, nextTick)
+			require.Equal(t, tc.expNext, next)
 			if tc.expErr == "" {
 				require.NoError(t, err)
 			} else {
@@ -286,64 +319,103 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 func TestSyncTimer_nextFlushIteration(t *testing.T) {
 	now := time.Now()
 	tt := []struct {
-		name         string
-		firstFlush   time.Time
-		now          time.Time
-		expIteration int64
+		name          string
+		firstFlush    time.Time
+		now           time.Time
+		groupInterval time.Duration
+		expIteration  int64
 	}{
 		{
-			name:         "now < flush",
-			now:          now.Add(-time.Millisecond * 10),
-			firstFlush:   now,
-			expIteration: 0,
+			name:          "now < flush",
+			now:           now.Add(-time.Millisecond * 10),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  0,
 		},
 		{
-			name:         "now = flush",
-			now:          now,
-			firstFlush:   now,
-			expIteration: 0,
+			name:          "now = flush",
+			now:           now,
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  0,
 		},
 		{
-			name:         "now = flush+1",
-			now:          now.Add(time.Millisecond * 1),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+1",
+			now:           now.Add(time.Millisecond * 1),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+3",
-			now:          now.Add(time.Millisecond * 3),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+3",
+			now:           now.Add(time.Millisecond * 3),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+7",
-			now:          now.Add(time.Millisecond * 7),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+7",
+			now:           now.Add(time.Millisecond * 7),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+10",
-			now:          now.Add(time.Millisecond * 10),
-			firstFlush:   now,
-			expIteration: 1,
+			name:          "now = flush+10",
+			now:           now.Add(time.Millisecond * 10),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  1,
 		},
 		{
-			name:         "now = flush+11",
-			now:          now.Add(time.Millisecond * 11),
-			firstFlush:   now,
-			expIteration: 2,
+			name:          "now = flush+11",
+			now:           now.Add(time.Millisecond * 11),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  2,
 		},
 		{
-			name:         "now = flush+19",
-			now:          now.Add(time.Millisecond * 19),
-			firstFlush:   now,
-			expIteration: 2,
+			name:          "now = flush+19",
+			now:           now.Add(time.Millisecond * 19),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  2,
 		},
 		{
-			name:         "now = flush+22",
-			now:          now.Add(time.Millisecond * 22),
-			firstFlush:   now,
-			expIteration: 3,
+			name:          "now = flush+22",
+			now:           now.Add(time.Millisecond * 22),
+			firstFlush:    now,
+			groupInterval: 10 * time.Millisecond,
+			expIteration:  3,
+		},
+		// Test cases for sub-millisecond precision
+		{
+			name:          "now just past alignment with sub-millisecond precision",
+			firstFlush:    time.Date(2026, 1, 9, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 31, 30, 128547621, time.UTC), // 167µs past alignment
+			groupInterval: 1 * time.Minute,
+			expIteration:  1, // Should return NEXT iteration, not current
+		},
+		{
+			name:          "now exactly on alignment with nanosecond precision",
+			firstFlush:    time.Date(2026, 1, 9, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 41, 30, 128379875, time.UTC), // Exactly 10 intervals later
+			groupInterval: 1 * time.Minute,
+			expIteration:  10, // Should return current iteration (0) since we're exactly on alignment
+		},
+		{
+			name:          "real-world case: iteration 1419 at 13:10:30.128",
+			firstFlush:    time.Date(2026, 1, 8, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 10, 30, 128547621, time.UTC), // ~23h 39min later
+			groupInterval: 1 * time.Minute,
+			expIteration:  1420, // Should return NEXT iteration (1420), not current (1419)
+		},
+		{
+			name:          "sub-millisecond before alignment",
+			firstFlush:    time.Date(2026, 1, 9, 13, 31, 30, 128379875, time.UTC),
+			now:           time.Date(2026, 1, 9, 13, 31, 40, 128200000, time.UTC), // 179µs before next alignment
+			groupInterval: 1 * time.Minute,
+			expIteration:  1, // Should return NEXT iteration
 		},
 	}
 
@@ -351,7 +423,7 @@ func TestSyncTimer_nextFlushIteration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &syncTimer{
 				logger:        log.NewNopLogger(),
-				groupInterval: time.Millisecond * 10,
+				groupInterval: tc.groupInterval,
 			}
 			fi := st.nextFlushIteration(tc.firstFlush, tc.now)
 			require.Equal(t, tc.expIteration, fi)
@@ -405,11 +477,12 @@ func (m *mockLog) Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error)
 
 type mockLogCall struct {
 	expGroupFingerprint uint64
+	expExpiryThreshold  time.Time
 	expExpiry           time.Duration
 	err                 error
 }
 
-func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiry time.Duration) error {
+func (m *mockLog) Log(groupFingerprint uint64, timestamp, expiryThreshold time.Time, expiry time.Duration) error {
 	if m.bench {
 		return nil
 	}
@@ -426,6 +499,7 @@ func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiry time.
 	}()
 
 	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
+	require.Equal(m.t, c.expExpiryThreshold, expiryThreshold)
 	require.Equal(m.t, c.expExpiry, expiry)
 
 	return c.err

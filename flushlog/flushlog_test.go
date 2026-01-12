@@ -251,10 +251,12 @@ func TestStateMerge(t *testing.T) {
 	exp := now.Add(time.Minute)
 
 	cases := []struct {
+		name  string
 		a, b  state
 		final state
 	}{
 		{
+			name: "multiple operations",
 			a: state{
 				1: newFlushLog(1, now, exp),
 				2: newFlushLog(2, now, exp),
@@ -266,7 +268,7 @@ func TestStateMerge(t *testing.T) {
 				3: newFlushLog(3, now.Add(time.Minute), exp),                         // newer timestamp, should overwrite
 				4: newFlushLog(4, now, exp),                                          // new key, should be added
 				5: newFlushLog(5, now.Add(-time.Minute), now.Add(-time.Millisecond)), // new key, expired, should not be added
-				6: newFlushLog(6, now, time.Time{}),                                  // zero expiration, should be deleted
+				6: newFlushLog(6, now.Add(time.Minute), time.Time{}),                 // zero expiration, should be deleted
 			},
 			final: state{
 				1: newFlushLog(1, now, exp),
@@ -275,18 +277,42 @@ func TestStateMerge(t *testing.T) {
 				4: newFlushLog(4, now, exp),
 			},
 		},
+		{
+			name: "deletes when expiration is zero and timestamp is after previous entry",
+			a: state{
+				1: newFlushLog(1, now, exp),
+			},
+			b: state{
+				1: newFlushLog(1, now.Add(time.Minute), time.Time{}), // zero expiration, should be deleted
+			},
+			final: state{},
+		},
+		{
+			name: "doesn't delete when timestamp is before previous entry",
+			a: state{
+				1: newFlushLog(1, now, exp),
+			},
+			b: state{
+				1: newFlushLog(1, now.Add(time.Minute*-1), time.Time{}),
+			},
+			final: state{
+				1: newFlushLog(1, now, exp),
+			},
+		},
 	}
 
 	for _, c := range cases {
-		ca, cb := c.a.clone(), c.b.clone()
+		t.Run(c.name, func(t *testing.T) {
+			ca, cb := c.a.clone(), c.b.clone()
 
-		res := c.a.clone()
-		for _, e := range cb {
-			res.merge(e, now)
-		}
-		require.Equal(t, c.final, res, "Merge result should match expectation")
-		require.Equal(t, c.b, cb, "Merged state should remain unmodified")
-		require.NotEqual(t, c.final, ca, "Merge should not change original state")
+			res := c.a.clone()
+			for _, e := range cb {
+				res.merge(e, now)
+			}
+			require.Equal(t, c.final, res, "Merge result should match expectation")
+			require.Equal(t, c.b, cb, "Merged state should remain unmodified")
+			require.Equal(t, c.a, ca, "Merge should not change original state")
+		})
 	}
 }
 
@@ -354,7 +380,7 @@ func TestQuery(t *testing.T) {
 	require.EqualError(t, err, "not found")
 
 	now := time.Now()
-	err = nl.Log(1, now, 0)
+	err = nl.Log(1, now, now, 0)
 	require.NoError(t, err, "logging flush failed")
 
 	entries, err := nl.Query(1)
