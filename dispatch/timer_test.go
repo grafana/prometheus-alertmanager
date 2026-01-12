@@ -212,33 +212,32 @@ func TestSyncTimer_getFirstFlushTime(t *testing.T) {
 func TestSyncTimer_getNextTick(t *testing.T) {
 	now := time.Now()
 	tt := []struct {
-		name         string
-		queryCall    mockQueryCall
-		now          time.Time
-		position     int
-		expDuration  time.Duration
-		expErr       string
-		expShouldLog bool
+		name        string
+		queryCall   mockQueryCall
+		now         time.Time
+		expNextTick time.Duration
+		expNext     time.Time
+		expErr      string
 	}{
 		{
 			name: "getFirstFlushTime returns unhandled error",
 			queryCall: mockQueryCall{
 				err: errors.New("mock error"),
 			},
-			position:     0,
-			expErr:       "error querying log entry: mock error",
-			expDuration:  time.Millisecond * 10,
-			expShouldLog: false,
+			now:         now,
+			expErr:      "error querying log entry: mock error",
+			expNextTick: time.Millisecond * 10,
+			expNext:     now.Add(time.Millisecond * 10),
 		},
 		{
 			name: "getFirstFlushTime returns not found error",
 			queryCall: mockQueryCall{
 				err: flushlog.ErrNotFound,
 			},
-			position:     0,
-			expErr:       "not found",
-			expDuration:  time.Millisecond * 10,
-			expShouldLog: true,
+			now:         now,
+			expErr:      "not found",
+			expNextTick: time.Millisecond * 10,
+			expNext:     now.Add(time.Millisecond * 10),
 		},
 		{
 			name: "next.After(now) == false",
@@ -249,10 +248,9 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:          now,
-			position:     0,
-			expDuration:  time.Millisecond * 10,
-			expShouldLog: false,
+			now:         now,
+			expNextTick: time.Millisecond * 10,
+			expNext:     now.Add(time.Millisecond * 10),
 		},
 		{
 			name: "first flush = now - (groupInterval/2)",
@@ -263,9 +261,9 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:          now,
-			expDuration:  time.Millisecond * 5,
-			expShouldLog: false,
+			now:         now,
+			expNextTick: time.Millisecond * 5,
+			expNext:     now.Add(time.Millisecond * 5),
 		},
 		{
 			name: "first flush = now - (groupInterval*1.5)",
@@ -276,12 +274,12 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:          now,
-			expDuration:  time.Millisecond * 5,
-			expShouldLog: false,
+			now:         now,
+			expNextTick: time.Millisecond * 5,
+			expNext:     now.Add(time.Millisecond * 5),
 		},
 		{
-			name: "next flush after expiry, position 0",
+			name: "next flush after expiry",
 			queryCall: mockQueryCall{
 				res: []*flushlogpb.FlushLog{
 					{
@@ -289,24 +287,9 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 					},
 				},
 			},
-			now:          now.Add(24 * time.Hour).Add(-time.Millisecond * 10),
-			position:     0,
-			expDuration:  time.Millisecond * 5,
-			expShouldLog: true,
-		},
-		{
-			name: "next flush after expiry, position 1",
-			queryCall: mockQueryCall{
-				res: []*flushlogpb.FlushLog{
-					{
-						Timestamp: now.Add(-time.Millisecond * 5),
-					},
-				},
-			},
-			now:          now.Add(24 * time.Hour).Add(-time.Millisecond * 5),
-			position:     1,
-			expDuration:  time.Millisecond * 10,
-			expShouldLog: false,
+			now:         now.Add(24 * time.Hour).Add(-time.Millisecond * 10),
+			expNextTick: time.Millisecond * 5,
+			expNext:     now.Add(24 * time.Hour).Add(-time.Millisecond * 5),
 		},
 	}
 
@@ -318,17 +301,17 @@ func TestSyncTimer_getNextTick(t *testing.T) {
 				logger:        log.NewNopLogger(),
 				groupInterval: time.Millisecond * 10,
 				position: func() int {
-					return tc.position
+					return 0
 				},
 			}
-			ft, shouldLog, err := st.getNextTick(tc.now, tc.now)
-			require.Equal(t, tc.expDuration, ft)
+			nextTick, next, err := st.getNextTick(tc.now, tc.now)
+			require.Equal(t, tc.expNextTick, nextTick)
+			require.Equal(t, tc.expNext, next)
 			if tc.expErr == "" {
 				require.NoError(t, err)
 			} else {
 				require.Equal(t, tc.expErr, err.Error())
 			}
-			require.Equal(t, tc.expShouldLog, shouldLog)
 		})
 	}
 }
@@ -494,11 +477,12 @@ func (m *mockLog) Query(groupFingerprint uint64) ([]*flushlogpb.FlushLog, error)
 
 type mockLogCall struct {
 	expGroupFingerprint uint64
+	expExpiryThreshold  time.Time
 	expExpiry           time.Duration
 	err                 error
 }
 
-func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiry time.Duration) error {
+func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiryThreshold time.Time, expiry time.Duration) error {
 	if m.bench {
 		return nil
 	}
@@ -515,6 +499,7 @@ func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiry time.
 	}()
 
 	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
+	require.Equal(m.t, c.expExpiryThreshold, expiry)
 	require.Equal(m.t, c.expExpiry, expiry)
 
 	return c.err

@@ -149,6 +149,7 @@ func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, ti
 		// subtract overshoot to maintain interval alignment
 		delta := now.Sub(next)
 		nextTick = st.groupInterval - delta
+		next = now.Add(nextTick)
 	}
 
 	// Calculate drift from expected schedule
