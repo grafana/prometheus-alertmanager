@@ -482,7 +482,7 @@ type mockLogCall struct {
 	err                 error
 }
 
-func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiryThreshold time.Time, expiry time.Duration) error {
+func (m *mockLog) Log(groupFingerprint uint64, timestamp, expiryThreshold time.Time, expiry time.Duration) error {
 	if m.bench {
 		return nil
 	}
@@ -499,7 +499,7 @@ func (m *mockLog) Log(groupFingerprint uint64, timestamp time.Time, expiryThresh
 	}()
 
 	require.Equal(m.t, c.expGroupFingerprint, groupFingerprint)
-	require.Equal(m.t, c.expExpiryThreshold, expiry)
+	require.Equal(m.t, c.expExpiryThreshold, expiryThreshold)
 	require.Equal(m.t, c.expExpiry, expiry)
 
 	return c.err
