@@ -397,10 +397,8 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 				// configuration reload or shutdown. In this case, the
 				// message should only be logged at the debug level.
 				lvl = level.Debug(l)
-			} else {
-				lvl = log.With(lvl, "aggrGroup", ag, "alerts", fmt.Sprintf("%v", alerts))
 			}
-			lvl.Log("msg", "Notify for alerts failed", "num_alerts", len(alerts), "err", err)
+			lvl.Log("msg", "Notify for alerts failed", "num_alerts", len(alerts), "err", err, "aggrGroup", ag, "alerts", fmt.Sprintf("%v", alerts))
 
 			span.RecordError(fmt.Errorf("notify for alerts failed: %w", err))
 			span.SetStatus(codes.Error, err.Error())
