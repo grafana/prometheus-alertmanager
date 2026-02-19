@@ -1788,6 +1788,62 @@ func TestStateMerge(t *testing.T) {
 	}
 }
 
+func TestSilencesMergeBroadcastBehavior(t *testing.T) {
+	testCases := []struct {
+		name           string
+		reliable       bool
+		wantBroadcasts int
+	}{
+		{name: "gossip", reliable: false, wantBroadcasts: 1},
+		{name: "reliable", reliable: true, wantBroadcasts: 0},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := New(Options{})
+			require.NoError(t, err)
+
+			mockClock := clock.NewMock()
+			s.clock = mockClock
+
+			var mu sync.Mutex
+			broadcasts := 0
+			s.SetBroadcast(func([]byte) {
+				mu.Lock()
+				broadcasts++
+				mu.Unlock()
+			})
+			if tc.reliable {
+				s.SetReliableDelivery(true)
+			}
+
+			now := mockClock.Now().UTC()
+			ms := &pb.MeshSilence{
+				Silence: &pb.Silence{
+					Id:        "123",
+					Matchers:  []*pb.Matcher{},
+					StartsAt:  now,
+					EndsAt:    now.Add(time.Hour),
+					UpdatedAt: now,
+					CreatedBy: "tests",
+					Comment:   "test",
+				},
+				ExpiresAt: now.Add(2 * time.Hour),
+			}
+
+			msg, err := (state{"123": ms}).MarshalBinary()
+			require.NoError(t, err)
+
+			require.NoError(t, s.Merge(msg))
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.Equal(t, tc.wantBroadcasts, broadcasts)
+		})
+	}
+}
+
 func TestStateCoding(t *testing.T) {
 	// Check whether encoding and decoding the data is symmetric.
 	now := time.Now().UTC()

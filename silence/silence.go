@@ -195,11 +195,12 @@ type Silences struct {
 	retention time.Duration
 	limits    Limits
 
-	mtx       sync.RWMutex
-	st        state
-	version   int // Increments whenever silences are added.
-	broadcast func([]byte)
-	mc        matcherCache
+	mtx             sync.RWMutex
+	st              state
+	version         int // Increments whenever silences are added.
+	broadcast       func([]byte)
+	mc              matcherCache
+	reliableChannel bool
 }
 
 // Limits contains the limits for silences.
@@ -952,7 +953,7 @@ func (s *Silences) Merge(b []byte) error {
 	for _, e := range st {
 		if merged := s.st.merge(e, now); merged {
 			s.version++
-			if !cluster.OversizedMessage(b) {
+			if !cluster.OversizedMessage(b) && !s.reliableChannel {
 				// If this is the first we've seen the message and it's
 				// not oversized, gossip it to other nodes. We don't
 				// propagate oversized messages because they're sent to
@@ -971,6 +972,13 @@ func (s *Silences) Merge(b []byte) error {
 func (s *Silences) SetBroadcast(f func([]byte)) {
 	s.mtx.Lock()
 	s.broadcast = f
+	s.mtx.Unlock()
+}
+
+// SetReliableDelivery marks whether the underlying cluster channel uses reliable delivery.
+func (s *Silences) SetReliableDelivery(enabled bool) {
+	s.mtx.Lock()
+	s.reliableChannel = enabled
 	s.mtx.Unlock()
 }
 

@@ -316,6 +316,57 @@ func TestStateMerge(t *testing.T) {
 	}
 }
 
+func TestFlushLogMergeBroadcastBehavior(t *testing.T) {
+	testCases := []struct {
+		name           string
+		reliable       bool
+		wantBroadcasts int
+	}{
+		{name: "gossip", reliable: false, wantBroadcasts: 1},
+		{name: "reliable", reliable: true, wantBroadcasts: 0},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			l, err := New(Options{})
+			require.NoError(t, err)
+
+			mockClock := clock.NewMock()
+			l.clock = mockClock
+
+			var mu sync.Mutex
+			broadcasts := 0
+			l.SetBroadcast(func([]byte) {
+				mu.Lock()
+				broadcasts++
+				mu.Unlock()
+			})
+			if tc.reliable {
+				l.SetReliableDelivery(true)
+			}
+
+			now := mockClock.Now()
+			e := &pb.MeshFlushLog{
+				FlushLog: &pb.FlushLog{
+					GroupFingerprint: 1,
+					Timestamp:        now,
+				},
+				ExpiresAt: now.Add(time.Hour),
+			}
+
+			msg, err := marshalMeshFlushLog(e)
+			require.NoError(t, err)
+
+			require.NoError(t, l.Merge(msg))
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.Equal(t, tc.wantBroadcasts, broadcasts)
+		})
+	}
+}
+
 func TestStateDataCoding(t *testing.T) {
 	// Check whether encoding and decoding the data is symmetric.
 	mockClock := clock.NewMock()

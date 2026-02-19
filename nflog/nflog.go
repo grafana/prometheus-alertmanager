@@ -84,9 +84,10 @@ type Log struct {
 
 	// For now we only store the most recently added log entry.
 	// The key is a serialized concatenation of group key and receiver.
-	mtx       sync.RWMutex
-	st        state
-	broadcast func([]byte)
+	mtx             sync.RWMutex
+	st              state
+	broadcast       func([]byte)
+	reliableChannel bool
 }
 
 // MaintenanceFunc represents the function to run as part of the periodic maintenance for the nflog.
@@ -527,7 +528,7 @@ func (l *Log) Merge(b []byte) error {
 	now := l.now()
 
 	for _, e := range st {
-		if merged := l.st.merge(e, now); merged && !cluster.OversizedMessage(b) {
+		if merged := l.st.merge(e, now); merged && !cluster.OversizedMessage(b) && !l.reliableChannel {
 			// If this is the first we've seen the message and it's
 			// not oversized, gossip it to other nodes. We don't
 			// propagate oversized messages because they're sent to
@@ -545,6 +546,13 @@ func (l *Log) Merge(b []byte) error {
 func (l *Log) SetBroadcast(f func([]byte)) {
 	l.mtx.Lock()
 	l.broadcast = f
+	l.mtx.Unlock()
+}
+
+// SetReliableDelivery marks whether the underlying cluster channel uses reliable delivery.
+func (l *Log) SetReliableDelivery(enabled bool) {
+	l.mtx.Lock()
+	l.reliableChannel = enabled
 	l.mtx.Unlock()
 }
 

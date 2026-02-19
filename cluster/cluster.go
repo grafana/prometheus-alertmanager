@@ -569,7 +569,13 @@ func (p *Peer) AddState(key string, s State, reg prometheus.Registerer, opts ...
 	sendOversize := func(n *memberlist.Node, b []byte) error {
 		return p.mlist.SendReliable(n, b)
 	}
-	return NewChannel(key, send, peers, sendOversize, p.logger, p.stopc, reg, opts...)
+	c := NewChannel(key, send, peers, sendOversize, p.logger, p.stopc, reg, opts...)
+
+	if setter, ok := s.(interface{ SetReliableDelivery(bool) }); ok {
+		setter.SetReliableDelivery(c.reliableDelivery)
+	}
+
+	return c
 }
 
 // Leave the cluster, waiting up to timeout.
