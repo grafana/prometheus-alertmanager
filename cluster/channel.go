@@ -26,11 +26,14 @@ import (
 	"github.com/prometheus/alertmanager/cluster/clusterpb"
 )
 
+const defaultQueueSize = 200
+
 type ChannelOption func(*channelConfig)
 
 // channelConfig holds optional configuration for a Channel.
 type channelConfig struct {
 	reliableDelivery bool
+	queueSize        int
 }
 
 // WithReliableDelivery configures the channel to send all messages reliably
@@ -39,6 +42,16 @@ type channelConfig struct {
 func WithReliableDelivery(enabled bool) ChannelOption {
 	return func(c *channelConfig) {
 		c.reliableDelivery = enabled
+	}
+}
+
+// WithQueueSize sets the queue size for the channel's oversize / send reliably message buffer.
+func WithQueueSize(size int) ChannelOption {
+	if size <= 0 {
+		panic("cluster: queue size must be positive")
+	}
+	return func(cfg *channelConfig) {
+		cfg.queueSize = size
 	}
 }
 
@@ -72,10 +85,11 @@ func NewChannel(
 	reg prometheus.Registerer,
 	opts ...ChannelOption,
 ) *Channel {
-	cfg := channelConfig{}
+	cfg := channelConfig{queueSize: defaultQueueSize}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	oversizeGossipMessageFailureTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name:        "alertmanager_oversized_gossip_message_failure_total",
 		Help:        "Number of oversized gossip message sends that failed.",
@@ -108,7 +122,7 @@ func NewChannel(
 		send:                              send,
 		peers:                             peers,
 		logger:                            logger,
-		msgc:                              make(chan []byte, 200),
+		msgc:                              make(chan []byte, cfg.queueSize),
 		reliableDelivery:                  cfg.reliableDelivery,
 		sendOversize:                      sendOversize,
 		oversizeGossipMessageFailureTotal: oversizeGossipMessageFailureTotal,
