@@ -25,6 +25,55 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+func TestAddStateAutoWiresReliableDelivery(t *testing.T) {
+	logger := log.NewNopLogger()
+	p, err := Create(
+		logger,
+		prometheus.NewRegistry(),
+		"127.0.0.1:0",
+		"",
+		[]string{},
+		true,
+		DefaultPushPullInterval,
+		DefaultGossipInterval,
+		DefaultTCPTimeout,
+		DefaultProbeTimeout,
+		DefaultProbeInterval,
+		nil,
+		false,
+		"",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, p)
+
+	t.Run("state implementing ReliableDeliveryAware gets wired", func(t *testing.T) {
+		s := &reliableDeliveryAwareState{}
+		p.AddState("test-rd", s, prometheus.NewRegistry())
+		require.NotNil(t, s.isReliableDelivery, "SetIsReliableDelivery should have been called")
+	})
+
+	t.Run("state not implementing ReliableDeliveryAware is not affected", func(t *testing.T) {
+		s := &plainState{}
+		// Should not panic.
+		p.AddState("test-plain", s, prometheus.NewRegistry())
+	})
+}
+
+type reliableDeliveryAwareState struct {
+	isReliableDelivery func([]byte) bool
+}
+
+func (s *reliableDeliveryAwareState) MarshalBinary() ([]byte, error) { return nil, nil }
+func (s *reliableDeliveryAwareState) Merge([]byte) error             { return nil }
+func (s *reliableDeliveryAwareState) SetIsReliableDelivery(f func([]byte) bool) {
+	s.isReliableDelivery = f
+}
+
+type plainState struct{}
+
+func (s *plainState) MarshalBinary() ([]byte, error) { return nil, nil }
+func (s *plainState) Merge([]byte) error             { return nil }
+
 func TestClusterJoinAndReconnect(t *testing.T) {
 	ip, _ := sockaddr.GetPrivateIP()
 	if ip == "" {
