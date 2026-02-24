@@ -249,7 +249,6 @@ func run() int {
 	if peer != nil {
 		c := peer.AddState("nfl", notificationLog, prometheus.DefaultRegisterer)
 		notificationLog.SetBroadcast(c.Broadcast)
-		notificationLog.SetIsReliableDelivery(c.ReliableDelivery)
 	}
 
 	wg.Add(1)
@@ -279,7 +278,6 @@ func run() int {
 	if peer != nil {
 		c := peer.AddState("sil", silences, prometheus.DefaultRegisterer)
 		silences.SetBroadcast(c.Broadcast)
-		silences.SetIsReliableDelivery(c.ReliableDelivery)
 	}
 
 	// Start providers before router potentially sends updates.

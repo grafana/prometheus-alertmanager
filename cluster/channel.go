@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/prometheus/alertmanager/cluster/clusterpb"
+	"github.com/prometheus/alertmanager/cluster/clusterutil"
 )
 
 const defaultQueueSize = 200
@@ -188,11 +189,5 @@ func (c *Channel) Broadcast(b []byte) {
 // peers (via TCP), either because the channel is configured for reliable
 // delivery or because the message is oversized.
 func (c *Channel) ReliableDelivery(b []byte) bool {
-	return c.reliableDelivery || OversizedMessage(b)
-}
-
-// OversizedMessage indicates whether or not the byte payload should be sent
-// via TCP.
-func OversizedMessage(b []byte) bool {
-	return len(b) > MaxGossipPacketSize/2
+	return c.reliableDelivery || clusterutil.OversizedMessage(b)
 }

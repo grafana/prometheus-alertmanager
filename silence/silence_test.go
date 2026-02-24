@@ -1788,6 +1788,58 @@ func TestStateMerge(t *testing.T) {
 	}
 }
 
+func TestMergeDefaultReliableDelivery(t *testing.T) {
+	// By default (no SetIsReliableDelivery call), oversized messages should
+	// not be re-broadcast and small messages should be re-broadcast.
+	s, err := New(Options{})
+	require.NoError(t, err)
+
+	var broadcasts [][]byte
+	s.SetBroadcast(func(b []byte) {
+		broadcasts = append(broadcasts, b)
+	})
+
+	now := s.nowUTC()
+	sil := &pb.MeshSilence{
+		Silence: &pb.Silence{
+			Id:        "small-1",
+			UpdatedAt: now,
+			Matchers:  []*pb.Matcher{{Name: "a", Pattern: "b", Type: pb.Matcher_EQUAL}},
+			StartsAt:  now,
+			EndsAt:    now.Add(time.Hour),
+		},
+		ExpiresAt: now.Add(2 * time.Hour),
+	}
+	smallPayload, err := marshalMeshSilence(sil)
+	require.NoError(t, err)
+
+	// Small message: should be re-broadcast.
+	err = s.Merge(smallPayload)
+	require.NoError(t, err)
+	require.Len(t, broadcasts, 1, "small message should be re-broadcast by default")
+
+	broadcasts = nil
+
+	// Oversized message (> 700 bytes): should NOT be re-broadcast.
+	sil.Silence.Id = "big-1"
+	sil.Silence.UpdatedAt = now.Add(time.Second)
+	// Pad matchers to make the payload oversized.
+	for i := 0; i < 50; i++ {
+		sil.Silence.Matchers = append(sil.Silence.Matchers, &pb.Matcher{
+			Name:    fmt.Sprintf("label_%d", i),
+			Pattern: "some-long-pattern-value-that-adds-bytes",
+			Type:    pb.Matcher_EQUAL,
+		})
+	}
+	bigPayload, err := marshalMeshSilence(sil)
+	require.NoError(t, err)
+	require.Greater(t, len(bigPayload), 700, "payload should be oversized")
+
+	err = s.Merge(bigPayload)
+	require.NoError(t, err)
+	require.Empty(t, broadcasts, "oversized message should not be re-broadcast by default")
+}
+
 func TestStateCoding(t *testing.T) {
 	// Check whether encoding and decoding the data is symmetric.
 	now := time.Now().UTC()
