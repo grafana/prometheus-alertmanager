@@ -74,6 +74,32 @@ func TestOversizedMessagesGossiped(t *testing.T) {
 	}
 }
 
+func TestResolveOptions(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		resolved := ResolveOptions()
+		require.Equal(t, defaultQueueSize, resolved.QueueSize)
+		require.False(t, resolved.ReliableDelivery)
+	})
+
+	t.Run("with queue size", func(t *testing.T) {
+		resolved := ResolveOptions(WithQueueSize(500))
+		require.Equal(t, 500, resolved.QueueSize)
+		require.False(t, resolved.ReliableDelivery)
+	})
+
+	t.Run("with reliable delivery", func(t *testing.T) {
+		resolved := ResolveOptions(WithReliableDelivery(true))
+		require.Equal(t, defaultQueueSize, resolved.QueueSize)
+		require.True(t, resolved.ReliableDelivery)
+	})
+
+	t.Run("with both options", func(t *testing.T) {
+		resolved := ResolveOptions(WithReliableDelivery(true), WithQueueSize(1000))
+		require.Equal(t, 1000, resolved.QueueSize)
+		require.True(t, resolved.ReliableDelivery)
+	})
+}
+
 func TestWithQueueSizePanicsOnNonPositive(t *testing.T) {
 	require.Panics(t, func() { WithQueueSize(0) })
 	require.Panics(t, func() { WithQueueSize(-1) })
