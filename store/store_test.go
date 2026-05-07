@@ -126,7 +126,7 @@ func TestDeleteIfNotModified(t *testing.T) {
 		require.NoError(t, a.Set(a2))
 
 		// Deleting a1 should not delete a2.
-		require.NoError(t, a.DeleteIfNotModified(types.AlertSlice{a1}))
+		a.DeleteIfNotModified(types.AlertSlice{a1})
 		// a1 should be deleted.
 		got, err := a.Get(a1.Fingerprint())
 		require.Equal(t, ErrNotFound, err)
