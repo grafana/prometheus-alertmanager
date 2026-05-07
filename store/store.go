@@ -116,16 +116,38 @@ func (a *Alerts) Set(alert *types.Alert) error {
 
 // DeleteIfNotModified deletes the slice of Alerts from the store if not
 // modified.
-func (a *Alerts) DeleteIfNotModified(alerts types.AlertSlice) error {
+func (a *Alerts) DeleteIfNotModified(alerts types.AlertSlice) {
 	a.Lock()
 	defer a.Unlock()
+	a.deleteIfNotModified(alerts)
+}
+
+// DeleteIfStale deletes the slice of Alerts from the store if the time since
+// the last update is greater than or equal to the given TTL.
+func (a *Alerts) DeleteIfStale(alerts types.AlertSlice, ttl time.Duration) {
+	a.Lock()
+	defer a.Unlock()
+
+	// Filter out non-stale alerts.
+	stale := make(types.AlertSlice, 0, len(alerts))
+	for _, alert := range alerts {
+		if time.Since(alert.UpdatedAt) >= ttl {
+			stale = append(stale, alert)
+		}
+	}
+
+	a.deleteIfNotModified(stale)
+}
+
+// deleteIfNotModified deletes alerts from the store whose UpdatedAt has not changed.
+// Not thread-safe. The caller must hold the lock.
+func (a *Alerts) deleteIfNotModified(alerts types.AlertSlice) {
 	for _, alert := range alerts {
 		fp := alert.Fingerprint()
 		if other, ok := a.c[fp]; ok && alert.UpdatedAt.Equal(other.UpdatedAt) {
 			delete(a.c, fp)
 		}
 	}
-	return nil
 }
 
 // List returns a slice of Alerts currently held in memory.
