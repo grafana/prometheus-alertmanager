@@ -128,6 +128,21 @@ func (a *Alerts) DeleteIfNotModified(alerts types.AlertSlice) error {
 	return nil
 }
 
+// DeleteIfStale deletes the slice of Alerts from the store if the time since the last update
+// is greater or equal than the TTL.
+func (a *Alerts) DeleteIfStale(alerts types.AlertSlice, ttl time.Duration) error {
+	a.Lock()
+	defer a.Unlock()
+	for _, alert := range alerts {
+		fp := alert.Fingerprint()
+		other, ok := a.c[fp]
+		if ok && alert.UpdatedAt.Equal(other.UpdatedAt) && time.Since(alert.UpdatedAt) >= ttl {
+			delete(a.c, fp)
+		}
+	}
+	return nil
+}
+
 // List returns a slice of Alerts currently held in memory.
 func (a *Alerts) List() []*types.Alert {
 	a.Lock()

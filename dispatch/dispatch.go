@@ -580,12 +580,20 @@ func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 
 	level.Debug(l).Log("msg", "flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
 
-	nf(ctx, alertsSlice...)
-	// Delete all resolved alerts regardless of notification outcome. We need
-	// to make sure that each resolved alert has not fired again during the
-	// flush as then we would delete an active alert thinking it was resolved.
-	if err := ag.alerts.DeleteIfNotModified(resolvedSlice); err != nil {
-		level.Error(l).Log("msg", "error on delete alerts", "err", err)
+	if nf(ctx, alertsSlice...) {
+		// Delete all resolved alerts as we just sent a notification for them,
+		// and we don't want to send another one. However, we need to make sure
+		// that each resolved alert has not fired again during the flush as then
+		// we would delete an active alert thinking it was resolved.
+		if err := ag.alerts.DeleteIfNotModified(resolvedSlice); err != nil {
+			level.Error(l).Log("msg", "error on delete alerts", "err", err)
+		}
+	} else {
+		// Delete resolved alerts after 3 * group_interval to avoid constant notification failures
+		// resulting in unbounded memory growth.
+		if err := ag.alerts.DeleteIfStale(resolvedSlice, ag.opts.GroupInterval*3); err != nil {
+			level.Error(l).Log("msg", "error on delete alerts", "err", err)
+		}
 	}
 }
 
