@@ -138,6 +138,72 @@ func TestDeleteIfNotModified(t *testing.T) {
 	})
 }
 
+func TestDeleteIfStale(t *testing.T) {
+	const ttl = time.Hour
+	now := time.Now()
+	staleTime := now.Add(-2 * ttl)
+	freshTime := now.Add(ttl)
+
+	newAlert := func(key, val string, updatedAt time.Time) *types.Alert {
+		return &types.Alert{
+			Alert:     model.Alert{Labels: model.LabelSet{model.LabelName(key): model.LabelValue(val)}},
+			UpdatedAt: updatedAt,
+		}
+	}
+
+	t.Run("stale alert is deleted", func(t *testing.T) {
+		a := NewAlerts()
+		alert := newAlert("foo", "bar", staleTime)
+		require.NoError(t, a.Set(alert))
+
+		a.DeleteIfStale(types.AlertSlice{alert}, ttl)
+
+		_, err := a.Get(alert.Fingerprint())
+		require.Equal(t, ErrNotFound, err)
+	})
+
+	t.Run("fresh alert is kept", func(t *testing.T) {
+		a := NewAlerts()
+		alert := newAlert("foo", "bar", freshTime)
+		require.NoError(t, a.Set(alert))
+
+		a.DeleteIfStale(types.AlertSlice{alert}, ttl)
+
+		got, err := a.Get(alert.Fingerprint())
+		require.NoError(t, err)
+		require.Equal(t, alert, got)
+	})
+
+	t.Run("modified alert is not deleted even if stale", func(t *testing.T) {
+		a := NewAlerts()
+		old := newAlert("foo", "bar", staleTime)
+		newer := newAlert("foo", "bar", freshTime)
+		require.NoError(t, a.Set(newer))
+
+		a.DeleteIfStale(types.AlertSlice{old}, ttl)
+
+		got, err := a.Get(newer.Fingerprint())
+		require.NoError(t, err)
+		require.Equal(t, newer, got)
+	})
+
+	t.Run("only stale alerts are deleted, fresh ones are kept", func(t *testing.T) {
+		a := NewAlerts()
+		stale := newAlert("stale", "yes", staleTime)
+		fresh := newAlert("fresh", "yes", freshTime)
+		require.NoError(t, a.Set(stale))
+		require.NoError(t, a.Set(fresh))
+
+		a.DeleteIfStale(types.AlertSlice{stale, fresh}, ttl)
+
+		_, err := a.Get(stale.Fingerprint())
+		require.Equal(t, ErrNotFound, err)
+		got, err := a.Get(fresh.Fingerprint())
+		require.NoError(t, err)
+		require.Equal(t, fresh, got)
+	})
+}
+
 func TestGC(t *testing.T) {
 	now := time.Now()
 	newAlert := func(key string, start, end time.Duration) *types.Alert {
