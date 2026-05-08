@@ -97,19 +97,21 @@ func newDelegate(l *slog.Logger, reg prometheus.Registerer, p *Peer, retransmit 
 	}, func() float64 {
 		return float64(bcast.NumQueued())
 	})
-	nodeAlive := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "alertmanager_cluster_alive_messages_total",
-		Help: "Total number of received alive messages.",
-	}, []string{"peer"},
+	nodeAlive := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "alertmanager_cluster_alive_messages_total",
+			Help: "Total number of received alive messages.",
+		}, []string{"peer"},
 	)
-	nodePingDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:                            "alertmanager_cluster_pings_seconds",
-		Help:                            "Histogram of latencies for ping messages.",
-		Buckets:                         []float64{.005, .01, .025, .05, .1, .25, .5},
-		NativeHistogramBucketFactor:     1.1,
-		NativeHistogramMaxBucketNumber:  100,
-		NativeHistogramMinResetDuration: 1 * time.Hour,
-	}, []string{"peer"},
+	nodePingDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:                            "alertmanager_cluster_pings_seconds",
+			Help:                            "Histogram of latencies for ping messages.",
+			Buckets:                         []float64{.005, .01, .025, .05, .1, .25, .5},
+			NativeHistogramBucketFactor:     1.1,
+			NativeHistogramMaxBucketNumber:  100,
+			NativeHistogramMinResetDuration: 1 * time.Hour,
+		}, []string{"peer"},
 	)
 
 	messagesReceived.WithLabelValues(fullState)
@@ -121,7 +123,8 @@ func newDelegate(l *slog.Logger, reg prometheus.Registerer, p *Peer, retransmit 
 	messagesSent.WithLabelValues(update)
 	messagesSentSize.WithLabelValues(update)
 
-	reg.MustRegister(messagesReceived, messagesReceivedSize, messagesSent, messagesSentSize,
+	reg.MustRegister(
+		messagesReceived, messagesReceivedSize, messagesSent, messagesSentSize,
 		gossipClusterMembers, peerPosition, healthScore, messagesQueued, messagesPruned,
 		nodeAlive, nodePingDuration,
 	)
@@ -236,19 +239,19 @@ func (d *delegate) MergeRemoteState(buf []byte, _ bool) {
 // NotifyJoin is called if a peer joins the cluster.
 func (d *delegate) NotifyJoin(n *memberlist.Node) {
 	d.logger.Debug("NotifyJoin", "node", n.Name, "addr", n.Address())
-	d.Peer.peerJoin(n)
+	d.peerJoin(n)
 }
 
 // NotifyLeave is called if a peer leaves the cluster.
 func (d *delegate) NotifyLeave(n *memberlist.Node) {
 	d.logger.Debug("NotifyLeave", "node", n.Name, "addr", n.Address())
-	d.Peer.peerLeave(n)
+	d.peerLeave(n)
 }
 
 // NotifyUpdate is called if a cluster peer gets updated.
 func (d *delegate) NotifyUpdate(n *memberlist.Node) {
 	d.logger.Debug("NotifyUpdate", "node", n.Name, "addr", n.Address())
-	d.Peer.peerUpdate(n)
+	d.peerUpdate(n)
 }
 
 // NotifyAlive implements the memberlist.AliveDelegate interface.

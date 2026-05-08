@@ -145,7 +145,7 @@ type SecretURL URL
 func (s SecretURL) MarshalYAML() (interface{}, error) {
 	if s.URL != nil {
 		if MarshalSecretValue {
-			return s.URL.String(), nil
+			return s.String(), nil
 		}
 		return secretToken, nil
 	}
@@ -174,7 +174,7 @@ func (s SecretURL) MarshalJSON() ([]byte, error) {
 		return json.Marshal("")
 	}
 	if MarshalSecretValue {
-		return json.Marshal(s.URL.String())
+		return json.Marshal(s.String())
 	}
 	return json.Marshal(secretToken)
 }

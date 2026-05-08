@@ -228,5 +228,5 @@ func TestDiscord_Notify(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	require.Equal(t, "{\"content\":\"Test Content\",\"embeds\":[{\"title\":\"Test Title\",\"description\":\"Test Message\",\"color\":10038562}],\"username\":\"Test Username\",\"avatar_url\":\"http://example.com/avatar.png\"}\n", resp)
+	require.JSONEq(t, "{\"content\":\"Test Content\",\"embeds\":[{\"title\":\"Test Title\",\"description\":\"Test Message\",\"color\":10038562}],\"username\":\"Test Username\",\"avatar_url\":\"http://example.com/avatar.png\"}", resp)
 }

@@ -943,7 +943,7 @@ func TestTimeMuteStage(t *testing.T) {
 
 			if len(test.mutedBy) == 0 {
 				// All alerts should be active.
-				require.Equal(t, len(test.alerts), len(active))
+				require.Len(t, active, len(test.alerts))
 				// The group should not be marked.
 				mutedBy, isMuted := marker.Muted("route1", "group1")
 				require.False(t, isMuted)
@@ -1061,7 +1061,7 @@ func TestTimeActiveStage(t *testing.T) {
 
 			if len(test.mutedBy) == 0 {
 				// All alerts should be active.
-				require.Equal(t, len(test.alerts), len(active))
+				require.Len(t, active, len(test.alerts))
 				// The group should not be marked.
 				mutedBy, isMuted := marker.Muted("route1", "group1")
 				require.False(t, isMuted)

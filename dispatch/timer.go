@@ -17,10 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
-
-	"log/slog"
 
 	"github.com/prometheus/alertmanager/flushlog"
 	"github.com/prometheus/alertmanager/flushlog/flushlogpb"
@@ -159,7 +158,8 @@ func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, ti
 	// Determine if significantly drifted (e.g., > 1 second)
 	isDrifted := drift > syncTimerMaxDrift
 
-	st.logger.Debug("calculated next tick",
+	st.logger.Debug(
+		"calculated next tick",
 		"next_tick", nextTick,
 		"flush_time", ft,
 		"now", now,

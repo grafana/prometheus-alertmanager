@@ -582,9 +582,8 @@ func TestJSONMarshalShowSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	require.Equal(t, "{\"S\":\"test\"}", string(c), "config's String method must reveal authentication credentials when MarshalSecretValue = true.")
+	require.JSONEq(t, "{\"S\":\"test\"}", string(c), "config's String method must reveal authentication credentials when MarshalSecretValue = true.")
 }
-
 
 func TestJSONMarshalHideSecretURL(t *testing.T) {
 	urlp, err := url.Parse("http://example.com/")

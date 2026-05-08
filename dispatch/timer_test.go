@@ -32,8 +32,8 @@ import (
 	"github.com/prometheus/alertmanager/types"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 )
 

@@ -16,7 +16,6 @@ package msteamsv2
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -52,7 +51,7 @@ func TestMSTeamsV2Retry(t *testing.T) {
 
 	for statusCode, expected := range test.RetryTests(test.DefaultRetryCodes()) {
 		actual, _ := notifier.retrier.Check(statusCode, nil)
-		require.Equal(t, expected, actual, fmt.Sprintf("retry - error on status %d", statusCode))
+		require.Equal(t, expected, actual, "retry - error on status %d", statusCode)
 	}
 }
 
@@ -79,9 +78,9 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 					HTTPConfig: &commoncfg.HTTPClientConfig{},
 				},
 				test.CreateTmpl(t),
-			promslog.NewNopLogger(),
-		)
-		require.NoError(t, err)
+				promslog.NewNopLogger(),
+			)
+			require.NoError(t, err)
 
 			notifier.postJSONFunc = func(ctx context.Context, client *http.Client, url string, body io.Reader) (*http.Response, error) {
 				resp := httptest.NewRecorder()
