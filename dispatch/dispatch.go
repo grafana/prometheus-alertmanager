@@ -391,7 +391,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 
 		_, _, err := d.stage.Exec(ctx, l, alerts...)
 		if err != nil {
-			lvl := level.Error(l)
+			lvl := level.Warn(l)
 			if errors.Is(ctx.Err(), context.Canceled) {
 				// It is expected for the context to be canceled on
 				// configuration reload or shutdown. In this case, the
