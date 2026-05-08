@@ -448,7 +448,7 @@ func Version() (string, error) {
 		return "", err
 	}
 
-	versionRE := regexp.MustCompile(`^amtool, version (\d+\.\d+\.\d+) *`)
+	versionRE := regexp.MustCompile(`^amtool, version ([^\s]*) *`)
 	matched := versionRE.FindStringSubmatch(string(out))
 	if len(matched) != 2 {
 		return "", errors.New("Unable to match version info regex: " + string(out))
