@@ -20,10 +20,10 @@ import (
 	"os"
 	"testing"
 
-	"github.com/go-kit/log"
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,7 +132,7 @@ func TestWithQueueSize(t *testing.T) {
 			<-blockSend
 			return nil
 		},
-		log.NewNopLogger(),
+		promslog.NewNopLogger(),
 		stopc,
 		reg,
 		WithQueueSize(2),
@@ -171,7 +171,7 @@ func newChannel(
 		send,
 		peers,
 		sendOversize,
-		log.NewNopLogger(),
+		promslog.NewNopLogger(),
 		make(chan struct{}),
 		prometheus.NewRegistry(),
 		opts...,

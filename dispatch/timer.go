@@ -20,25 +20,24 @@ import (
 	"math"
 	"time"
 
+	"log/slog"
+
 	"github.com/prometheus/alertmanager/flushlog"
 	"github.com/prometheus/alertmanager/flushlog/flushlogpb"
-
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 )
 
 // TimerFactory is a function that creates a timer.
 type TimerFactory func(
 	context.Context,
 	*RouteOpts,
-	log.Logger,
+	*slog.Logger,
 	uint64,
 ) Timer
 
 func standardTimerFactory(
 	_ context.Context,
 	o *RouteOpts,
-	_ log.Logger,
+	_ *slog.Logger,
 	_ uint64,
 ) Timer {
 	return &standardTimer{
@@ -83,7 +82,7 @@ type syncTimer struct {
 	t                *time.Timer
 	flushLog         FlushLog
 	position         func() int
-	logger           log.Logger
+	logger           *slog.Logger
 	groupFingerprint uint64
 	groupInterval    time.Duration
 }
@@ -101,7 +100,7 @@ func NewSyncTimerFactory(
 	return func(
 		ctx context.Context,
 		o *RouteOpts,
-		l log.Logger,
+		l *slog.Logger,
 		groupFingerprint uint64,
 	) Timer {
 		st := &syncTimer{
@@ -160,8 +159,7 @@ func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, ti
 	// Determine if significantly drifted (e.g., > 1 second)
 	isDrifted := drift > syncTimerMaxDrift
 
-	level.Debug(st.logger).Log(
-		"msg", "calculated next tick",
+	st.logger.Debug("calculated next tick",
 		"next_tick", nextTick,
 		"flush_time", ft,
 		"now", now,
@@ -179,7 +177,7 @@ func (st *syncTimer) getNextTick(now, pipelineTime time.Time) (time.Duration, ti
 func (st *syncTimer) Reset(pipelineTime time.Time) bool {
 	nextTick, next, err := st.getNextTick(time.Now(), pipelineTime)
 	if err != nil && !errors.Is(err, flushlog.ErrNotFound) {
-		level.Error(st.logger).Log("msg", "failed to calculate next tick", "err", err)
+		st.logger.Error("failed to calculate next tick", "err", err)
 	} else {
 		expiryThreshold := next.Add(2 * st.groupInterval)
 		st.logFlush(pipelineTime, expiryThreshold)
@@ -195,7 +193,7 @@ func (st *syncTimer) Flush() bool {
 func (st *syncTimer) Stop(cleanState bool) bool {
 	if st.position() == 0 && cleanState {
 		if err := st.flushLog.Delete(st.groupFingerprint); err != nil && !errors.Is(err, flushlog.ErrNotFound) {
-			level.Warn(st.logger).Log("msg", "failed to delete flush log entry", "err", err)
+			st.logger.Warn("failed to delete flush log entry", "err", err)
 		}
 	}
 	return st.t.Stop()
@@ -222,13 +220,13 @@ func (st *syncTimer) logFlush(pipelineTime, expiryThreshold time.Time) {
 		st.flushLogExpiry(),
 	); err != nil {
 		// log the error and continue
-		level.Error(st.logger).Log("msg", "failed to log tick time", "err", err)
+		st.logger.Error("failed to log tick time", "err", err)
 	}
 }
 
 func (st *syncTimer) nextFlushIteration(firstFlush, now time.Time) int64 {
 	if now.Before(firstFlush) {
-		level.Warn(st.logger).Log("msg", "now is before first flush", "first flush", firstFlush, "now", now)
+		st.logger.Warn("now is before first flush", "first flush", firstFlush, "now", now)
 		return 0
 	}
 

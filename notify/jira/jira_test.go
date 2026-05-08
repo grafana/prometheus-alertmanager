@@ -16,6 +16,7 @@ package jira
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,9 +27,8 @@ import (
 
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
-
-	"github.com/go-kit/log"
 
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
@@ -50,7 +50,7 @@ func TestJiraRetry(t *testing.T) {
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),
-		log.NewNopLogger(),
+		promslog.NewNopLogger(),
 	)
 	require.NoError(t, err)
 
@@ -58,14 +58,14 @@ func TestJiraRetry(t *testing.T) {
 
 	for statusCode, expected := range test.RetryTests(retryCodes) {
 		actual, _ := notifier.retrier.Check(statusCode, nil)
-		require.Equal(t, expected, actual, "retry - error on status %d", statusCode)
+		require.Equal(t, expected, actual, fmt.Sprintf("retry - error on status %d", statusCode))
 	}
 }
 
 func TestJiraTemplating(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/search/jql":
+		case "/search":
 			w.Write([]byte(`{"total": 0, "issues": []}`))
 			return
 		default:
@@ -90,6 +90,24 @@ func TestJiraTemplating(t *testing.T) {
 		{
 			title: "full-blown message",
 			cfg: &config.JiraConfig{
+				Summary:     `{{ template "jira.default.summary" . }}`,
+				Description: `{{ template "jira.default.description" . }}`,
+			},
+			retry: false,
+		},
+		{
+			title: "template project",
+			cfg: &config.JiraConfig{
+				Project:     `{{ .CommonLabels.lbl1 }}`,
+				Summary:     `{{ template "jira.default.summary" . }}`,
+				Description: `{{ template "jira.default.description" . }}`,
+			},
+			retry: false,
+		},
+		{
+			title: "template issue type",
+			cfg: &config.JiraConfig{
+				IssueType:   `{{ .CommonLabels.lbl1 }}`,
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: `{{ template "jira.default.description" . }}`,
 			},
@@ -125,7 +143,7 @@ func TestJiraTemplating(t *testing.T) {
 		t.Run(tc.title, func(t *testing.T) {
 			tc.cfg.APIURL = &config.URL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
-			pd, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
+			pd, err := New(tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
 			require.NoError(t, err)
 
 			ctx := context.Background()
@@ -191,6 +209,7 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
+				Total:  0,
 				Issues: []issue{},
 			},
 			issue: issue{
@@ -201,6 +220,51 @@ func TestJiraNotify(t *testing.T) {
 					Issuetype:   &idNameValue{Name: "Incident"},
 					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
 					Project:     &issueProject{Key: "OPS"},
+					Priority:    &idNameValue{Name: "High"},
+				},
+			},
+			customFieldAssetFn: func(t *testing.T, issue map[string]any) {},
+			errMsg:             "",
+		},
+		{
+			title: "create new issue with template project and issue type",
+			cfg: &config.JiraConfig{
+				Summary:           `{{ template "jira.default.summary" . }}`,
+				Description:       `{{ template "jira.default.description" . }}`,
+				IssueType:         "{{ .CommonLabels.issue_type }}",
+				Project:           "{{ .CommonLabels.project }}",
+				Priority:          `{{ template "jira.default.priority" . }}`,
+				Labels:            []string{"alertmanager", "{{ .GroupLabels.alertname }}"},
+				ReopenDuration:    model.Duration(1 * time.Hour),
+				ReopenTransition:  "REOPEN",
+				ResolveTransition: "CLOSE",
+				WontFixResolution: "WONTFIX",
+			},
+			alert: &types.Alert{
+				Alert: model.Alert{
+					Labels: model.LabelSet{
+						"alertname":  "test",
+						"instance":   "vm1",
+						"severity":   "critical",
+						"project":    "MONITORING",
+						"issue_type": "MINOR",
+					},
+					StartsAt: time.Now(),
+					EndsAt:   time.Now().Add(time.Hour),
+				},
+			},
+			searchResponse: issueSearchResult{
+				Total:  0,
+				Issues: []issue{},
+			},
+			issue: issue{
+				Key: "",
+				Fields: &issueFields{
+					Summary:     "[FIRING:1] test (vm1 MINOR MONITORING critical)",
+					Description: "\n\n# Alerts Firing:\n\nLabels:\n  - alertname = test\n  - instance = vm1\n  - issue_type = MINOR\n  - project = MONITORING\n  - severity = critical\n\nAnnotations:\n\nSource: \n\n\n\n\n",
+					Issuetype:   &idNameValue{Name: "MINOR"},
+					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
+					Project:     &issueProject{Key: "MONITORING"},
 					Priority:    &idNameValue{Name: "High"},
 				},
 			},
@@ -243,6 +307,7 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
+				Total:  0,
 				Issues: []issue{},
 			},
 			issue: issue{
@@ -292,6 +357,7 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
+				Total: 1,
 				Issues: []issue{
 					{
 						Key: "OPS-1",
@@ -347,6 +413,7 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
+				Total: 1,
 				Issues: []issue{
 					{
 						Key: "OPS-3",
@@ -401,6 +468,7 @@ func TestJiraNotify(t *testing.T) {
 				},
 			},
 			searchResponse: issueSearchResult{
+				Total: 1,
 				Issues: []issue{
 					{
 						Key: "OPS-3",
@@ -436,7 +504,7 @@ func TestJiraNotify(t *testing.T) {
 		t.Run(tc.title, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/search/jql":
+				case "/search":
 					enc := json.NewEncoder(w)
 					if err := enc.Encode(tc.searchResponse); err != nil {
 						panic(err)
@@ -570,7 +638,7 @@ func TestJiraNotify(t *testing.T) {
 			tc.cfg.APIURL = &config.URL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 
-			notifier, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
+			notifier, err := New(tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
 			require.NoError(t, err)
 
 			ctx := context.Background()
