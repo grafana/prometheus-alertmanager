@@ -947,6 +947,9 @@ DEPRECATION NOTICE: Microsoft is deprecating the creation and usage of [Microsof
 # Message body template.
 [ text: <tmpl_string> | default = '{{ template "msteams.default.text" . }}' ]
 
+# Raw request body template. If you provide raw_message then title, text and summary will be omitted.
+[ raw_message: <tmpl_string> ]
+
 # The HTTP client's configuration.
 [ http_config: <http_config> | default = global.http_config ]
 ```

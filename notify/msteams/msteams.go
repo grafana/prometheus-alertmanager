@@ -87,6 +87,20 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		return false, err
 	}
 
+	url, err := getWebhookUrl(n.conf)
+	if err != nil {
+		return false, err
+	}
+
+	if strings.TrimSpace(n.conf.RawMessage) != "" {
+		raw := tmpl(n.conf.RawMessage)
+		if err != nil {
+			return false, err
+		}
+		payload := bytes.NewBufferString(raw)
+		return postJSON(ctx, n, url, *payload)
+	}
+
 	title := tmpl(n.conf.Title)
 	if err != nil {
 		return false, err
@@ -125,22 +139,31 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 	msg := NewAdaptiveCardsMessage(card)
 	msg.Summary = summary
 
-	var url string
-	if n.conf.WebhookURL != nil {
-		url = n.conf.WebhookURL.String()
-	} else {
-		content, err := os.ReadFile(n.conf.WebhookURLFile)
-		if err != nil {
-			return false, fmt.Errorf("read webhook_url_file: %w", err)
-		}
-		url = strings.TrimSpace(string(content))
-	}
-
 	var payload bytes.Buffer
 	if err = json.NewEncoder(&payload).Encode(msg); err != nil {
 		return false, err
 	}
 
+	return postJSON(ctx, n, url, payload)
+}
+
+// getWebhookUrl returns webhook url whether it's given as file or as string.
+func getWebhookUrl(conf *config.MSTeamsConfig) (string, error) {
+	var url string
+	if conf.WebhookURL != nil {
+		url = conf.WebhookURL.String()
+	} else {
+		content, err := os.ReadFile(conf.WebhookURLFile)
+		if err != nil {
+			return "", fmt.Errorf("read webhook_url_file: %w", err)
+		}
+		url = strings.TrimSpace(string(content))
+	}
+	return url, nil
+}
+
+// postJSON posts json to given url and checks if retry is needed.
+func postJSON(ctx context.Context, n *Notifier, url string, payload bytes.Buffer) (bool, error) {
 	resp, err := n.postJSONFunc(ctx, n.client, url, &payload)
 	if err != nil {
 		return true, notify.RedactURL(err)
