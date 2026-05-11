@@ -15,7 +15,7 @@ jobs:
         with:
           persist-credentials: false
       - name: install Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v6
         with:
           go-version: 1.25.x
       # pin the mixtool version until https://github.com/monitoring-mixins/mixtool/issues/135 is merged.
