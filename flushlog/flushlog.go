@@ -151,10 +151,10 @@ func (s state) clone() state {
 // being removed: a deletion that drops the local entry would let an
 // in-flight refresh broadcast for the same group_fingerprint re-add the
 // entry, causing a gossip ping-pong (the deleted and refreshed messages
-// would oscillate between peers). Keeping the tombstone with the original
-// Timestamp lets the entry-path's Timestamp.Before check reject stale
-// refreshes naturally. Tombstones are GC'd in FlushLog.GC once
-// Timestamp + retention has elapsed.
+// would oscillate between peers). Keeping the tombstone with a Timestamp at
+// least as new as the removed entry lets the entry-path's Timestamp.Before
+// check reject stale refreshes naturally. Tombstones are GC'd in FlushLog.GC
+// once Timestamp + retention has elapsed.
 func (s state) merge(e *pb.MeshFlushLog, now time.Time) bool {
 	if e.ExpiresAt.IsZero() { // tombstone
 		prev, ok := s[e.FlushLog.GroupFingerprint]
@@ -443,6 +443,7 @@ func (l *FlushLog) Delete(groupFingerprint uint64) error {
 		return nil
 	}
 
+	fl.FlushLog.Timestamp = l.now()
 	fl.ExpiresAt = time.Time{} // mark as tombstone in place; entry stays in state
 
 	b, err := marshalMeshFlushLog(fl)

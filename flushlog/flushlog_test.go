@@ -63,6 +63,7 @@ func TestLogGC(t *testing.T) {
 func TestLogDelete(t *testing.T) {
 	mockClock := clock.NewMock()
 	now := mockClock.Now()
+	old := now.Add(-time.Hour)
 	newFlushLog := func(fp uint64, ts, exp time.Time) *pb.MeshFlushLog {
 		return &pb.MeshFlushLog{
 			FlushLog: &pb.FlushLog{
@@ -75,7 +76,7 @@ func TestLogDelete(t *testing.T) {
 
 	l := &FlushLog{
 		st: state{
-			1: newFlushLog(1, now, now.Add(time.Hour)),
+			1: newFlushLog(1, old, now.Add(time.Hour)),
 			2: newFlushLog(2, now, now.Add(time.Second)),
 		},
 		clock:     mockClock,
@@ -85,13 +86,49 @@ func TestLogDelete(t *testing.T) {
 	err := l.Delete(1)
 	require.NoError(t, err, "unexpected delete error")
 
-	// Tombstone retained in state with the original FlushLog.Timestamp and
+	// Tombstone retained in state with the deletion time as FlushLog.Timestamp and
 	// ExpiresAt zeroed; entry 2 untouched.
 	expected := state{
 		1: newFlushLog(1, now, time.Time{}),
 		2: newFlushLog(2, now, now.Add(time.Second)),
 	}
 	require.Equal(t, expected, l.st, "unexpected state after delete")
+}
+
+func TestLogDelete_TombstoneSurvivesRetentionAfterDelete(t *testing.T) {
+	mockClock := clock.NewMock()
+	now := mockClock.Now()
+	retention := time.Hour
+
+	l := &FlushLog{
+		st: state{
+			1: &pb.MeshFlushLog{
+				FlushLog: &pb.FlushLog{
+					GroupFingerprint: 1,
+					Timestamp:        now.Add(-2 * retention),
+				},
+				ExpiresAt: now.Add(retention),
+			},
+		},
+		clock:     mockClock,
+		retention: retention,
+		metrics:   newMetrics(nil),
+		broadcast: func([]byte) {},
+	}
+
+	err := l.Delete(1)
+	require.NoError(t, err)
+
+	n, err := l.GC()
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "tombstone should be retained for a full retention window after delete")
+	require.Contains(t, l.st, uint64(1), "tombstone should survive immediate GC")
+
+	mockClock.Add(retention + time.Nanosecond)
+	n, err = l.GC()
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "tombstone should be swept after retention since delete")
+	require.NotContains(t, l.st, uint64(1), "expired tombstone should be swept")
 }
 
 func TestLogSnapshot(t *testing.T) {
@@ -604,10 +641,10 @@ func TestLogGC_Tombstones(t *testing.T) {
 		retention: retention,
 		metrics:   newMetrics(nil),
 		st: state{
-			1: entry(1, now, now.Add(time.Second)),                      // entry, ExpiresAt still in future — keep
-			2: entry(2, now.Add(-2*time.Hour), now.Add(-time.Second)),   // entry, expired — sweep
-			3: entry(3, now, time.Time{}),                               // tombstone, Timestamp+retention in future — keep
-			4: entry(4, now.Add(-2*retention), time.Time{}),             // tombstone, Timestamp+retention in past — sweep
+			1: entry(1, now, now.Add(time.Second)),                    // entry, ExpiresAt still in future — keep
+			2: entry(2, now.Add(-2*time.Hour), now.Add(-time.Second)), // entry, expired — sweep
+			3: entry(3, now, time.Time{}),                             // tombstone, Timestamp+retention in future — keep
+			4: entry(4, now.Add(-2*retention), time.Time{}),           // tombstone, Timestamp+retention in past — sweep
 		},
 	}
 
