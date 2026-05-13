@@ -655,10 +655,10 @@ func TestLogGC_Tombstones(t *testing.T) {
 		retention: retention,
 		metrics:   newMetrics(nil),
 		st: state{
-			1: entry(1, now, now.Add(time.Second)),                      // entry, ExpiresAt still in future — keep
-			2: entry(2, now.Add(-2*time.Hour), now.Add(-time.Second)),   // entry, expired — sweep
-			3: entry(3, now, time.Time{}),                               // tombstone, Timestamp+retention in future — keep
-			4: entry(4, now.Add(-2*retention), time.Time{}),             // tombstone, Timestamp+retention in past — sweep
+			1: entry(1, now, now.Add(time.Second)),                    // entry, ExpiresAt still in future — keep
+			2: entry(2, now.Add(-2*time.Hour), now.Add(-time.Second)), // entry, expired — sweep
+			3: entry(3, now, time.Time{}),                             // tombstone, Timestamp+retention in future — keep
+			4: entry(4, now.Add(-2*retention), time.Time{}),           // tombstone, Timestamp+retention in past — sweep
 		},
 	}
 
