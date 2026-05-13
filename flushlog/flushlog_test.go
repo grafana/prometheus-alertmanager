@@ -582,6 +582,45 @@ func TestLog_AfterTombstone(t *testing.T) {
 	require.Len(t, broadcasts, 1, "expected exactly one broadcast")
 }
 
+// TestQuery_PointerStability asserts that a *pb.FlushLog returned by
+// Query is not mutated by a subsequent Delete. Query releases the read
+// lock before the caller dereferences fields; mutating the in-map
+// pointer (rather than replacing it) would race on time.Time's
+// multi-word value.
+func TestQuery_PointerStability(t *testing.T) {
+	mockClock := clock.NewMock()
+	t1 := mockClock.Now()
+
+	l := &FlushLog{
+		clock:     mockClock,
+		retention: 24 * time.Hour,
+		metrics:   newMetrics(nil),
+		broadcast: func([]byte) {},
+		st: state{
+			1: &pb.MeshFlushLog{
+				FlushLog: &pb.FlushLog{
+					GroupFingerprint: 1,
+					Timestamp:        t1,
+				},
+				ExpiresAt: t1.Add(time.Hour),
+			},
+		},
+	}
+
+	entries, err := l.Query(1)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	held := entries[0]
+	require.Equal(t, t1, held.Timestamp)
+
+	// Advance the clock and delete. This would bump the in-map Timestamp
+	// to the new now if Delete mutated the existing pointer in place.
+	mockClock.Add(100 * time.Hour)
+	require.NoError(t, l.Delete(1))
+
+	require.Equal(t, t1, held.Timestamp, "pointer returned by Query must not be mutated by Delete")
+}
+
 // TestLogDelete_LongLivedEntry asserts that Delete bumps the tombstone's
 // Timestamp to the deletion time when the underlying entry has been
 // refreshed for longer than retention. Without the bump, the tombstone

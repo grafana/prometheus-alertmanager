@@ -437,6 +437,12 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime, expiryThreshold time.
 // stays pinned to its original flush time would produce a tombstone whose
 // Timestamp + retention is already in the past, and GC would sweep it on
 // the next tick — letting in-flight refresh broadcasts resurrect the entry.
+//
+// The tombstone is built as a fresh MeshFlushLog (including a fresh inner
+// FlushLog) rather than mutating the in-map pointer. Query returns the
+// inner *pb.FlushLog by reference and releases the read lock before the
+// caller dereferences fields like Timestamp; mutating the shared pointer
+// would race those readers on time.Time's multi-word value.
 func (l *FlushLog) Delete(groupFingerprint uint64) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
@@ -451,12 +457,20 @@ func (l *FlushLog) Delete(groupFingerprint uint64) error {
 	}
 
 	now := l.now()
-	fl.ExpiresAt = time.Time{} // mark as tombstone in place; entry stays in state
-	if fl.FlushLog.Timestamp.Before(now) {
-		fl.FlushLog.Timestamp = now
+	ts := fl.FlushLog.Timestamp
+	if ts.Before(now) {
+		ts = now
 	}
+	tomb := &pb.MeshFlushLog{
+		FlushLog: &pb.FlushLog{
+			GroupFingerprint: fl.FlushLog.GroupFingerprint,
+			Timestamp:        ts,
+		},
+		ExpiresAt: time.Time{},
+	}
+	l.st[groupFingerprint] = tomb
 
-	b, err := marshalMeshFlushLog(fl)
+	b, err := marshalMeshFlushLog(tomb)
 	if err != nil {
 		return err
 	}
