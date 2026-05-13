@@ -582,6 +582,57 @@ func TestLog_AfterTombstone(t *testing.T) {
 	require.Len(t, broadcasts, 1, "expected exactly one broadcast")
 }
 
+// TestLogDelete_LongLivedEntry asserts that Delete bumps the tombstone's
+// Timestamp to the deletion time when the underlying entry has been
+// refreshed for longer than retention. Without the bump, the tombstone
+// would be swept by GC immediately (Timestamp + retention is already in
+// the past), opening a resurrection window for in-flight refresh
+// broadcasts.
+func TestLogDelete_LongLivedEntry(t *testing.T) {
+	mockClock := clock.NewMock()
+	t1 := mockClock.Now()
+	retention := 24 * time.Hour
+	mockClock.Add(100 * time.Hour)
+	deletionTime := mockClock.Now()
+
+	l := &FlushLog{
+		clock:     mockClock,
+		retention: retention,
+		metrics:   newMetrics(nil),
+		broadcast: func([]byte) {},
+		st: state{
+			1: &pb.MeshFlushLog{
+				FlushLog: &pb.FlushLog{
+					GroupFingerprint: 1,
+					Timestamp:        t1, // original flush, well outside retention
+				},
+				ExpiresAt: deletionTime.Add(retention), // recently refreshed
+			},
+		},
+	}
+
+	err := l.Delete(1)
+	require.NoError(t, err)
+
+	tomb, ok := l.st[1]
+	require.True(t, ok, "tombstone must be retained in state")
+	require.True(t, tomb.ExpiresAt.IsZero(), "ExpiresAt must be zero")
+	require.Equal(t, deletionTime, tomb.FlushLog.Timestamp, "Timestamp must be bumped to deletion time")
+
+	// GC right after delete must not sweep the tombstone.
+	n, err := l.GC()
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "tombstone must not be swept immediately after delete")
+	require.Contains(t, l.st, uint64(1))
+
+	// Advance past retention from deletion; tombstone is now eligible for sweep.
+	mockClock.Add(retention + time.Second)
+	n, err = l.GC()
+	require.NoError(t, err)
+	require.Equal(t, 1, n, "tombstone must be swept once retention since delete has elapsed")
+	require.NotContains(t, l.st, uint64(1))
+}
+
 // TestLogGC_Tombstones asserts GC retains tombstones until
 // FlushLog.Timestamp + retention has passed, then sweeps them.
 func TestLogGC_Tombstones(t *testing.T) {

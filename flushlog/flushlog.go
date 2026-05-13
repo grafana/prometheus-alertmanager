@@ -151,10 +151,10 @@ func (s state) clone() state {
 // being removed: a deletion that drops the local entry would let an
 // in-flight refresh broadcast for the same group_fingerprint re-add the
 // entry, causing a gossip ping-pong (the deleted and refreshed messages
-// would oscillate between peers). Keeping the tombstone with the original
-// Timestamp lets the entry-path's Timestamp.Before check reject stale
-// refreshes naturally. Tombstones are GC'd in FlushLog.GC once
-// Timestamp + retention has elapsed.
+// would oscillate between peers). Keeping the tombstone with a Timestamp
+// at least as recent as the deleted entry's lets the entry-path's
+// Timestamp.Before check reject stale refreshes naturally. Tombstones are
+// GC'd in FlushLog.GC once Timestamp + retention has elapsed.
 func (s state) merge(e *pb.MeshFlushLog, now time.Time) bool {
 	if e.ExpiresAt.IsZero() { // tombstone
 		prev, ok := s[e.FlushLog.GroupFingerprint]
@@ -429,7 +429,14 @@ func (l *FlushLog) Log(groupFingerprint uint64, flushTime, expiryThreshold time.
 // broadcasts it. The tombstone is retained in state (rather than being
 // removed) so that stale refresh broadcasts arriving after the delete
 // cannot resurrect the entry — see state.merge for the full rationale.
-// Tombstones are eventually swept by FlushLog.GC.
+//
+// The tombstone's FlushLog.Timestamp is bumped to now (or kept if already
+// later — possible under clock skew across peers) so FlushLog.GC sweeps it
+// at deletion_time + retention regardless of how long the underlying entry
+// was alive. Without this, a long-firing alert whose FlushLog.Timestamp
+// stays pinned to its original flush time would produce a tombstone whose
+// Timestamp + retention is already in the past, and GC would sweep it on
+// the next tick — letting in-flight refresh broadcasts resurrect the entry.
 func (l *FlushLog) Delete(groupFingerprint uint64) error {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
@@ -443,7 +450,11 @@ func (l *FlushLog) Delete(groupFingerprint uint64) error {
 		return nil
 	}
 
+	now := l.now()
 	fl.ExpiresAt = time.Time{} // mark as tombstone in place; entry stays in state
+	if fl.FlushLog.Timestamp.Before(now) {
+		fl.FlushLog.Timestamp = now
+	}
 
 	b, err := marshalMeshFlushLog(fl)
 	if err != nil {
