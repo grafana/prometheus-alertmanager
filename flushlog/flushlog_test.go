@@ -633,6 +633,41 @@ func TestLogDelete_LongLivedEntry(t *testing.T) {
 	require.NotContains(t, l.st, uint64(1))
 }
 
+func TestLogDelete_DoesNotMutateQueriedEntry(t *testing.T) {
+	mockClock := clock.NewMock()
+	t1 := mockClock.Now()
+	retention := 24 * time.Hour
+
+	l := &FlushLog{
+		clock:     mockClock,
+		retention: retention,
+		metrics:   newMetrics(nil),
+		broadcast: func([]byte) {},
+		st: state{
+			1: &pb.MeshFlushLog{
+				FlushLog: &pb.FlushLog{
+					GroupFingerprint: 1,
+					Timestamp:        t1,
+				},
+				ExpiresAt: t1.Add(retention),
+			},
+		},
+	}
+
+	entries, err := l.Query(1)
+	require.NoError(t, err)
+	queried := entries[0]
+
+	mockClock.Add(time.Hour)
+	deletionTime := mockClock.Now()
+	err = l.Delete(1)
+	require.NoError(t, err)
+
+	require.Equal(t, t1, queried.Timestamp, "Delete must not mutate previously queried entries")
+	require.False(t, queried == l.st[1].FlushLog, "Delete must replace the stored FlushLog before changing Timestamp")
+	require.Equal(t, deletionTime, l.st[1].FlushLog.Timestamp, "stored tombstone Timestamp must still be bumped")
+}
+
 // TestLogGC_Tombstones asserts GC retains tombstones until
 // FlushLog.Timestamp + retention has passed, then sweeps them.
 func TestLogGC_Tombstones(t *testing.T) {

@@ -453,7 +453,9 @@ func (l *FlushLog) Delete(groupFingerprint uint64) error {
 	now := l.now()
 	fl.ExpiresAt = time.Time{} // mark as tombstone in place; entry stays in state
 	if fl.FlushLog.Timestamp.Before(now) {
-		fl.FlushLog.Timestamp = now
+		flushLog := *fl.FlushLog
+		flushLog.Timestamp = now
+		fl.FlushLog = &flushLog
 	}
 
 	b, err := marshalMeshFlushLog(fl)
