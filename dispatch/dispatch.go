@@ -596,11 +596,17 @@ func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 		ag.alerts.DeleteIfStale(resolvedSlice, ag.opts.GroupInterval*3)
 	}
 
-	// Delete resolved alerts from the marker to prevent orphaned entries: the
-	// mem.Alerts GC fires periodically and deletes marker entries, but the next
-	// flush can re-create them via SetInhibited and never cleans them up.
+	// Delete resolved alerts from the marker after they are removed from the
+	// alert store to prevent orphaned entries.
 	if ag.marker != nil {
+		retained := map[model.Fingerprint]struct{}{}
+		for _, a := range ag.alerts.List() {
+			retained[a.Fingerprint()] = struct{}{}
+		}
 		for _, a := range resolvedSlice {
+			if _, ok := retained[a.Fingerprint()]; ok {
+				continue
+			}
 			ag.marker.Delete(a.Fingerprint())
 		}
 	}

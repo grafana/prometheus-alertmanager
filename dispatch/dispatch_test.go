@@ -766,6 +766,27 @@ func TestAggrGroupFlushDeletesMarkerEntries(t *testing.T) {
 		require.Equal(t, 0, marker.Count())
 	})
 
+	t.Run("fresh resolved alert keeps its marker entry on notification failure", func(t *testing.T) {
+		marker, ag := newGroup()
+		oldGroupInterval := ag.opts.GroupInterval
+		ag.opts.GroupInterval = time.Hour
+		defer func() {
+			ag.opts.GroupInterval = oldGroupInterval
+		}()
+
+		now := time.Now()
+		a := &types.Alert{
+			Alert:     model.Alert{Labels: lset, StartsAt: now.Add(-time.Minute), EndsAt: now.Add(-time.Nanosecond)},
+			UpdatedAt: now,
+		}
+		require.NoError(t, ag.alerts.Set(a))
+		ag.flush(context.Background(), nfWithInhibit(marker, false))
+		require.Equal(t, 1, marker.Count())
+		got, err := ag.alerts.Get(a.Fingerprint())
+		require.NoError(t, err)
+		require.Equal(t, a, got)
+	})
+
 	t.Run("active alert keeps its marker entry", func(t *testing.T) {
 		marker, ag := newGroup()
 		require.NoError(t, ag.alerts.Set(&types.Alert{
@@ -774,6 +795,29 @@ func TestAggrGroupFlushDeletesMarkerEntries(t *testing.T) {
 		}))
 		ag.flush(context.Background(), nfWithInhibit(marker, true))
 		require.Equal(t, 1, marker.Count())
+	})
+
+	t.Run("refired resolved alert keeps its marker entry", func(t *testing.T) {
+		marker, ag := newGroup()
+		a := resolved(time.Now().Add(-time.Second))
+		require.NoError(t, ag.alerts.Set(a))
+
+		now := time.Now()
+		refired := &types.Alert{
+			Alert:     model.Alert{Labels: lset, StartsAt: now, EndsAt: now.Add(time.Hour)},
+			UpdatedAt: now,
+		}
+		ag.flush(context.Background(), func(_ context.Context, alerts ...*types.Alert) bool {
+			for _, a := range alerts {
+				marker.SetInhibited(a.Fingerprint())
+			}
+			require.NoError(t, ag.alerts.Set(refired))
+			return true
+		})
+		require.Equal(t, 1, marker.Count())
+		got, err := ag.alerts.Get(a.Fingerprint())
+		require.NoError(t, err)
+		require.Equal(t, refired, got)
 	})
 
 	t.Run("GC race: entry re-created by flush after GC deletion is cleaned up", func(t *testing.T) {
