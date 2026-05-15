@@ -584,24 +584,25 @@ func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 
 	level.Debug(l).Log("msg", "flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
 
+	var deleted []model.Fingerprint
 	if nf(ctx, alertsSlice...) {
 		// Delete all resolved alerts as we just sent a notification for them,
 		// and we don't want to send another one. However, we need to make sure
 		// that each resolved alert has not fired again during the flush as then
 		// we would delete an active alert thinking it was resolved.
-		ag.alerts.DeleteIfNotModified(resolvedSlice)
+		deleted = ag.alerts.DeleteIfNotModified(resolvedSlice)
 	} else {
 		// Delete resolved alerts after 3 * group_interval to avoid persistent notification failures
 		// causing unbounded memory growth.
-		ag.alerts.DeleteIfStale(resolvedSlice, ag.opts.GroupInterval*3)
+		deleted = ag.alerts.DeleteIfStale(resolvedSlice, ag.opts.GroupInterval*3)
 	}
 
 	// Delete resolved alerts from the marker to prevent orphaned entries: the
 	// mem.Alerts GC fires periodically and deletes marker entries, but the next
 	// flush can re-create them via SetInhibited and never cleans them up.
 	if ag.marker != nil {
-		for _, a := range resolvedSlice {
-			ag.marker.Delete(a.Fingerprint())
+		for _, fp := range deleted {
+			ag.marker.Delete(fp)
 		}
 	}
 }
