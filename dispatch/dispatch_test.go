@@ -785,4 +785,37 @@ func TestAggrGroupFlushDeletesMarkerEntries(t *testing.T) {
 		ag.flush(context.Background(), nfWithInhibit(marker, true))
 		require.Equal(t, 0, marker.Count())
 	})
+
+	t.Run("re-fired alert during flush keeps its marker entry", func(t *testing.T) {
+		marker, ag := newGroup()
+
+		// Two resolved alerts with different fingerprints.
+		a1 := resolved(time.Now().Add(-time.Second))
+		a2 := &types.Alert{
+			Alert:     model.Alert{Labels: model.LabelSet{"alertname": "test2"}, StartsAt: time.Now().Add(-time.Minute), EndsAt: time.Now().Add(-time.Second)},
+			UpdatedAt: time.Now().Add(-time.Second),
+		}
+		require.NoError(t, ag.alerts.Set(a1))
+		require.NoError(t, ag.alerts.Set(a2))
+
+		// nf simulates a2 re-firing during notification delivery.
+		nf := func(_ context.Context, alerts ...*types.Alert) bool {
+			for _, a := range alerts {
+				marker.SetInhibited(a.Fingerprint())
+			}
+			refired := *a2
+			refired.EndsAt = time.Now().Add(time.Hour)
+			refired.UpdatedAt = time.Now()
+			require.NoError(t, ag.alerts.Set(&refired))
+			return true
+		}
+
+		ag.flush(context.Background(), nf)
+
+		// a1 was deleted, marker entry gone. a2 re-fired, marker entry kept.
+		require.Equal(t, 1, marker.Count())
+		_, inhibited := marker.Inhibited(a2.Fingerprint())
+		require.False(t, inhibited)
+		require.True(t, marker.Active(a2.Fingerprint()))
+	})
 }
