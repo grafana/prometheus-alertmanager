@@ -37,6 +37,18 @@ import (
 	"github.com/prometheus/alertmanager/types"
 )
 
+func stringPtr(v string) *string {
+	return &v
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+func jiraField(template string) config.JiraFieldConfig {
+	return config.JiraFieldConfig{Template: template}
+}
+
 func TestJiraRetry(t *testing.T) {
 	notifier, err := New(
 		&config.JiraConfig{
@@ -90,31 +102,31 @@ func TestJiraTemplating(t *testing.T) {
 		{
 			title: "full-blown message",
 			cfg: &config.JiraConfig{
-				Summary:     `{{ template "jira.default.summary" . }}`,
-				Description: `{{ template "jira.default.description" . }}`,
+				Summary:     jiraField(`{{ template "jira.default.summary" . }}`),
+				Description: jiraField(`{{ template "jira.default.description" . }}`),
 			},
 			retry: false,
 		},
 		{
 			title: "summary with templating errors",
 			cfg: &config.JiraConfig{
-				Summary: "{{ ",
+				Summary: jiraField("{{ "),
 			},
 			errMsg: "template: :1: unclosed action",
 		},
 		{
 			title: "description with templating errors",
 			cfg: &config.JiraConfig{
-				Summary:     `{{ template "jira.default.summary" . }}`,
-				Description: "{{ ",
+				Summary:     jiraField(`{{ template "jira.default.summary" . }}`),
+				Description: jiraField("{{ "),
 			},
 			errMsg: "template: :1: unclosed action",
 		},
 		{
 			title: "priority with templating errors",
 			cfg: &config.JiraConfig{
-				Summary:     `{{ template "jira.default.summary" . }}`,
-				Description: `{{ template "jira.default.description" . }}`,
+				Summary:     jiraField(`{{ template "jira.default.summary" . }}`),
+				Description: jiraField(`{{ template "jira.default.description" . }}`),
 				Priority:    "{{ ",
 			},
 			errMsg: "template: :1: unclosed action",
@@ -168,8 +180,8 @@ func TestJiraNotify(t *testing.T) {
 		{
 			title: "create new issue",
 			cfg: &config.JiraConfig{
-				Summary:           `{{ template "jira.default.summary" . }}`,
-				Description:       `{{ template "jira.default.description" . }}`,
+				Summary:           jiraField(`{{ template "jira.default.summary" . }}`),
+				Description:       jiraField(`{{ template "jira.default.description" . }}`),
 				IssueType:         "Incident",
 				Project:           "OPS",
 				Priority:          `{{ template "jira.default.priority" . }}`,
@@ -196,7 +208,7 @@ func TestJiraNotify(t *testing.T) {
 			issue: issue{
 				Key: "",
 				Fields: &issueFields{
-					Summary:     "[FIRING:1] test (vm1 critical)",
+					Summary:     stringPtr("[FIRING:1] test (vm1 critical)"),
 					Description: "\n\n# Alerts Firing:\n\nLabels:\n  - alertname = test\n  - instance = vm1\n  - severity = critical\n\nAnnotations:\n\nSource: \n\n\n\n\n",
 					Issuetype:   &idNameValue{Name: "Incident"},
 					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
@@ -208,10 +220,75 @@ func TestJiraNotify(t *testing.T) {
 			errMsg:             "",
 		},
 		{
+			title: "update existing issue without summary and description updates",
+			cfg: &config.JiraConfig{
+				Summary: config.JiraFieldConfig{
+					Template:     `{{ template "jira.default.summary" . }}`,
+					EnableUpdate: boolPtr(false),
+				},
+				Description: config.JiraFieldConfig{
+					Template:     `{{ template "jira.default.description" . }}`,
+					EnableUpdate: boolPtr(false),
+				},
+				IssueType:         "Incident",
+				Project:           "OPS",
+				Priority:          `{{ template "jira.default.priority" . }}`,
+				Labels:            []string{"alertmanager", "{{ .GroupLabels.alertname }}"},
+				ReopenDuration:    model.Duration(1 * time.Hour),
+				ReopenTransition:  "REOPEN",
+				ResolveTransition: "CLOSE",
+				WontFixResolution: "WONTFIX",
+			},
+			alert: &types.Alert{
+				Alert: model.Alert{
+					Labels: model.LabelSet{
+						"alertname": "test",
+						"instance":  "vm1",
+						"severity":  "critical",
+					},
+					StartsAt: time.Now(),
+					EndsAt:   time.Now().Add(time.Hour),
+				},
+			},
+			searchResponse: issueSearchResult{
+				Issues: []issue{
+					{
+						Key: "OPS-4",
+						Fields: &issueFields{
+							Status: &issueStatus{
+								Name: "Open",
+								StatusCategory: struct {
+									Key string `json:"key"`
+								}{
+									Key: "open",
+								},
+							},
+						},
+					},
+				},
+			},
+			issue: issue{
+				Key: "",
+				Fields: &issueFields{
+					Issuetype: &idNameValue{Name: "Incident"},
+					Labels:    []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
+					Project:   &issueProject{Key: "OPS"},
+					Priority:  &idNameValue{Name: "High"},
+				},
+			},
+			customFieldAssetFn: func(t *testing.T, issue map[string]any) {
+				_, hasSummary := issue["summary"]
+				_, hasDescription := issue["description"]
+				require.False(t, hasSummary)
+				require.False(t, hasDescription)
+			},
+			errMsg: "",
+		},
+		{
 			title: "create new issue with custom field and too long summary",
 			cfg: &config.JiraConfig{
-				Summary:     strings.Repeat("A", maxSummaryLenRunes+10),
-				Description: `{{ template "jira.default.description" . }}`,
+				Summary:     jiraField(strings.Repeat("A", maxSummaryLenRunes+10)),
+				Description: jiraField(`{{ template "jira.default.description" . }}`),
 				IssueType:   "Incident",
 				Project:     "OPS",
 				Priority:    `{{ template "jira.default.priority" . }}`,
@@ -248,7 +325,7 @@ func TestJiraNotify(t *testing.T) {
 			issue: issue{
 				Key: "",
 				Fields: &issueFields{
-					Summary:     strings.Repeat("A", maxSummaryLenRunes-1) + "…",
+					Summary:     stringPtr(strings.Repeat("A", maxSummaryLenRunes-1) + "…"),
 					Description: "\n\n# Alerts Firing:\n\nLabels:\n  - alertname = test\n  - instance = vm1\n\nAnnotations:\n\nSource: \n\n\n\n\n",
 					Issuetype:   &idNameValue{Name: "Incident"},
 					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
@@ -270,8 +347,8 @@ func TestJiraNotify(t *testing.T) {
 		{
 			title: "reopen issue",
 			cfg: &config.JiraConfig{
-				Summary:           `{{ template "jira.default.summary" . }}`,
-				Description:       `{{ template "jira.default.description" . }}`,
+				Summary:           jiraField(`{{ template "jira.default.summary" . }}`),
+				Description:       jiraField(`{{ template "jira.default.description" . }}`),
 				IssueType:         "Incident",
 				Project:           "OPS",
 				Priority:          `{{ template "jira.default.priority" . }}`,
@@ -311,7 +388,7 @@ func TestJiraNotify(t *testing.T) {
 			issue: issue{
 				Key: "",
 				Fields: &issueFields{
-					Summary:     "[FIRING:1] test (vm1)",
+					Summary:     stringPtr("[FIRING:1] test (vm1)"),
 					Description: "\n\n# Alerts Firing:\n\nLabels:\n  - alertname = test\n  - instance = vm1\n\nAnnotations:\n\nSource: \n\n\n\n\n",
 					Issuetype:   &idNameValue{Name: "Incident"},
 					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
@@ -325,8 +402,8 @@ func TestJiraNotify(t *testing.T) {
 		{
 			title: "error resolve transition not found",
 			cfg: &config.JiraConfig{
-				Summary:           `{{ template "jira.default.summary" . }}`,
-				Description:       `{{ template "jira.default.description" . }}`,
+				Summary:           jiraField(`{{ template "jira.default.summary" . }}`),
+				Description:       jiraField(`{{ template "jira.default.description" . }}`),
 				IssueType:         "Incident",
 				Project:           "OPS",
 				Priority:          `{{ template "jira.default.priority" . }}`,
@@ -366,7 +443,7 @@ func TestJiraNotify(t *testing.T) {
 			issue: issue{
 				Key: "",
 				Fields: &issueFields{
-					Summary:     "[RESOLVED] test (vm1)",
+					Summary:     stringPtr("[RESOLVED] test (vm1)"),
 					Description: "\n\n\n# Alerts Resolved:\n\nLabels:\n  - alertname = test\n  - instance = vm1\n\nAnnotations:\n\nSource: \n\n\n\n",
 					Issuetype:   &idNameValue{Name: "Incident"},
 					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
@@ -379,8 +456,8 @@ func TestJiraNotify(t *testing.T) {
 		{
 			title: "error reopen transition not found",
 			cfg: &config.JiraConfig{
-				Summary:           `{{ template "jira.default.summary" . }}`,
-				Description:       `{{ template "jira.default.description" . }}`,
+				Summary:           jiraField(`{{ template "jira.default.summary" . }}`),
+				Description:       jiraField(`{{ template "jira.default.description" . }}`),
 				IssueType:         "Incident",
 				Project:           "OPS",
 				Priority:          `{{ template "jira.default.priority" . }}`,
@@ -420,7 +497,7 @@ func TestJiraNotify(t *testing.T) {
 			issue: issue{
 				Key: "",
 				Fields: &issueFields{
-					Summary:     "[FIRING:1] test (vm1)",
+					Summary:     stringPtr("[FIRING:1] test (vm1)"),
 					Description: "\n\n# Alerts Firing:\n\nLabels:\n  - alertname = test\n  - instance = vm1\n\nAnnotations:\n\nSource: \n\n\n\n\n",
 					Issuetype:   &idNameValue{Name: "Incident"},
 					Labels:      []string{"ALERT{6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b}", "alertmanager", "test"},
@@ -524,6 +601,7 @@ func TestJiraNotify(t *testing.T) {
 				case "/issue/OPS-1":
 				case "/issue/OPS-2":
 				case "/issue/OPS-3":
+				case "/issue/OPS-4":
 					fallthrough
 				case "/issue":
 					body, err := io.ReadAll(r.Body)
@@ -555,8 +633,6 @@ func TestJiraNotify(t *testing.T) {
 					} else {
 						t.Errorf("fields should a map of string")
 					}
-
-					w.WriteHeader(http.StatusCreated)
 
 					w.WriteHeader(http.StatusCreated)
 
