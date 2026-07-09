@@ -60,6 +60,73 @@ func TestLogGC(t *testing.T) {
 	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
 }
 
+func TestLogMaxSizeBytes(t *testing.T) {
+	mockClock := clock.NewMock()
+	rcv := func(i int) *pb.Receiver {
+		return &pb.Receiver{GroupName: "g", Integration: "test", Idx: uint32(i)}
+	}
+	newLog := func(limit int) *Log {
+		return &Log{
+			clock:     mockClock,
+			retention: time.Hour,
+			limits:    Limits{MaxSizeBytes: func() int { return limit }},
+			st:        state{},
+			broadcast: func([]byte) {},
+			metrics:   newMetrics(nil),
+		}
+	}
+
+	// Measure one entry's size (limit 0 = no eviction).
+	measure := newLog(0)
+	require.NoError(t, measure.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
+	entrySize := measure.size
+	require.Positive(t, entrySize)
+
+	// Allow between two and three entries so two fit comfortably and a third evicts.
+	l := newLog(2*entrySize + entrySize/2)
+	require.NoError(t, l.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(2), "gk2", []uint64{2}, nil, 0))
+	require.Len(t, l.st, 2)
+
+	// A third entry evicts the oldest (gk1), keeping the two most recent entries.
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(3), "gk3", []uint64{3}, nil, 0))
+	require.Len(t, l.st, 2)
+	require.LessOrEqual(t, l.size, l.limits.MaxSizeBytes())
+	require.NotContains(t, l.st, stateKey("gk1", rcv(1)))
+	require.Contains(t, l.st, stateKey("gk2", rcv(2)))
+	require.Contains(t, l.st, stateKey("gk3", rcv(3)))
+	require.Equal(t, 1.0, testutil.ToFloat64(l.metrics.entriesEvictedTotal))
+
+	// Updating an existing key never evicts and never rejects.
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(2), "gk2", []uint64{2, 3}, nil, 0))
+	require.Len(t, l.st, 2)
+	require.Contains(t, l.st, stateKey("gk2", rcv(2)))
+
+	// Eviction prefers resolved entries over older firing entries.
+	lr := newLog(2*entrySize + entrySize/2)
+	mockClock.Add(time.Second)
+	require.NoError(t, lr.Log(rcv(1), "gk1", []uint64{1}, nil, 0)) // firing, oldest
+	mockClock.Add(time.Second)
+	require.NoError(t, lr.Log(rcv(2), "gk2", nil, []uint64{2}, 0)) // resolved, newer
+	require.Len(t, lr.st, 2)
+	mockClock.Add(time.Second)
+	require.NoError(t, lr.Log(rcv(3), "gk3", []uint64{3}, nil, 0)) // firing, newest, triggers eviction
+	require.Len(t, lr.st, 2)
+	require.NotContains(t, lr.st, stateKey("gk2", rcv(2)), "resolved entry should be evicted first")
+	require.Contains(t, lr.st, stateKey("gk1", rcv(1)), "older firing entry should be retained over a resolved one")
+	require.Contains(t, lr.st, stateKey("gk3", rcv(3)))
+
+	// A limit of 0 disables eviction.
+	l0 := newLog(0)
+	require.NoError(t, l0.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
+	require.NoError(t, l0.Log(rcv(2), "gk2", []uint64{2}, nil, 0))
+	require.NoError(t, l0.Log(rcv(3), "gk3", []uint64{3}, nil, 0))
+	require.Len(t, l0.st, 3)
+}
+
 func TestLogSnapshot(t *testing.T) {
 	// Check whether storing and loading the snapshot is symmetric.
 	mockClock := clock.NewMock()
