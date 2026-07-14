@@ -125,6 +125,7 @@ type notifyKey int
 const (
 	keyReceiverName notifyKey = iota
 	keyRepeatInterval
+	keyGroupInterval
 	keyGroupLabels
 	keyGroupKey
 	keyFiringAlerts
@@ -169,6 +170,11 @@ func WithRepeatInterval(ctx context.Context, t time.Duration) context.Context {
 	return context.WithValue(ctx, keyRepeatInterval, t)
 }
 
+// WithGroupInterval populates a context with a group interval.
+func WithGroupInterval(ctx context.Context, t time.Duration) context.Context {
+	return context.WithValue(ctx, keyGroupInterval, t)
+}
+
 // WithMuteTimeIntervals populates a context with a slice of mute time names.
 func WithMuteTimeIntervals(ctx context.Context, mt []string) context.Context {
 	return context.WithValue(ctx, keyMuteTimeIntervals, mt)
@@ -182,6 +188,13 @@ func WithActiveTimeIntervals(ctx context.Context, at []string) context.Context {
 // second argument is false.
 func RepeatInterval(ctx context.Context) (time.Duration, bool) {
 	v, ok := ctx.Value(keyRepeatInterval).(time.Duration)
+	return v, ok
+}
+
+// GroupInterval extracts a group interval from the context. Iff none exists, the
+// second argument is false.
+func GroupInterval(ctx context.Context) (time.Duration, bool) {
+	v, ok := ctx.Value(keyGroupInterval).(time.Duration)
 	return v, ok
 }
 
@@ -948,7 +961,15 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l log.Logger, alerts ...*typ
 	if !ok {
 		return ctx, nil, errors.New("repeat interval missing")
 	}
+
+	// The nflog entry must outlive the group's flush cadence, not just the repeat cycle.
+	// A resolved notification can only be emitted at a flush (group_interval) and needs the firing entry to still be present.
+	// With only 2*repeat, a group_interval larger than 2*repeat_interval lets the entry be swept before the resolve is flushed,
+	// silently dropping the resolved notification.
 	expiry := 2 * repeat
+	if groupInterval, ok := GroupInterval(ctx); ok && groupInterval > repeat {
+		expiry = 2 * groupInterval
+	}
 
 	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry)
 }

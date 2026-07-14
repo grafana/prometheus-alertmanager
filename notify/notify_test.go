@@ -688,6 +688,60 @@ func TestSetNotifiesStage(t *testing.T) {
 	require.NotNil(t, resctx)
 }
 
+func TestSetNotifiesStageEntryExpiry(t *testing.T) {
+	// The nflog entry must outlive the group's flush cadence so a later resolve
+	// flush can still find the firing entry: expiry is 2*max(repeat, group).
+	tnflog := &testNflog{}
+	s := &SetNotifiesStage{
+		recv:  &nflogpb.Receiver{GroupName: "test"},
+		nflog: tnflog,
+	}
+	alerts := []*types.Alert{{}, {}, {}}
+	base := WithResolvedAlerts(WithFiringAlerts(WithGroupKey(context.Background(), "1"), []uint64{0, 1, 2}), []uint64{})
+
+	for _, tc := range []struct {
+		name           string
+		repeatInterval time.Duration
+		groupInterval  time.Duration // 0 => not populated in the context
+		expectedExpiry time.Duration
+	}{
+		{
+			name:           "group_interval larger than repeat: expiry follows group_interval",
+			repeatInterval: 5 * time.Minute,
+			groupInterval:  time.Hour,
+			expectedExpiry: 2 * time.Hour,
+		},
+		{
+			name:           "repeat larger than group_interval (heartbeat): expiry follows repeat",
+			repeatInterval: 4 * time.Hour,
+			groupInterval:  time.Minute,
+			expectedExpiry: 8 * time.Hour,
+		},
+		{
+			name:           "group_interval absent: expiry follows repeat",
+			repeatInterval: time.Hour,
+			groupInterval:  0,
+			expectedExpiry: 2 * time.Hour,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := WithRepeatInterval(base, tc.repeatInterval)
+			if tc.groupInterval > 0 {
+				ctx = WithGroupInterval(ctx, tc.groupInterval)
+			}
+			var gotExpiry time.Duration
+			tnflog.logFunc = func(_ *nflogpb.Receiver, _ string, _, _ []uint64, expiry time.Duration) error {
+				gotExpiry = expiry
+				return nil
+			}
+			_, res, err := s.Exec(ctx, log.NewNopLogger(), alerts...)
+			require.NoError(t, err)
+			require.Equal(t, alerts, res)
+			require.Equal(t, tc.expectedExpiry, gotExpiry)
+		})
+	}
+}
+
 func TestMuteStage(t *testing.T) {
 	// Mute all label sets that have a "mute" key.
 	muter := types.MuteFunc(func(lset model.LabelSet) bool {
