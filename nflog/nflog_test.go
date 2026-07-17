@@ -67,12 +67,13 @@ func TestLogMaxSizeBytes(t *testing.T) {
 	}
 	newLog := func(limit int) *Log {
 		return &Log{
-			clock:     mockClock,
-			retention: time.Hour,
-			limits:    Limits{MaxSizeBytes: func() int { return limit }},
-			st:        state{},
-			broadcast: func([]byte) {},
-			metrics:   newMetrics(nil),
+			clock:              mockClock,
+			retention:          time.Hour,
+			limits:             Limits{MaxSizeBytes: func() int { return limit }},
+			st:                 state{},
+			broadcast:          func([]byte) {},
+			isReliableDelivery: func([]byte) bool { return true },
+			metrics:            newMetrics(nil),
 		}
 	}
 
@@ -125,6 +126,27 @@ func TestLogMaxSizeBytes(t *testing.T) {
 	require.NoError(t, l0.Log(rcv(2), "gk2", []uint64{2}, nil, 0))
 	require.NoError(t, l0.Log(rcv(3), "gk3", []uint64{3}, nil, 0))
 	require.Len(t, l0.st, 3)
+
+	// Build a marshaled state with more entries than the limit allows.
+	src := newLog(0)
+	for _, gk := range []string{"mg1", "mg2", "mg3", "mg4", "mg5"} {
+		mockClock.Add(time.Second)
+		require.NoError(t, src.Log(rcv(1), gk, []uint64{1}, nil, 0))
+	}
+	b, err := src.st.MarshalBinary()
+	require.NoError(t, err)
+
+	// Merge (gossip) enforces the limit, not just local writes.
+	lm := newLog(2*entrySize + entrySize/2)
+	require.NoError(t, lm.Merge(b))
+	require.LessOrEqual(t, lm.size, lm.limits.MaxSizeBytes())
+	require.Positive(t, testutil.ToFloat64(lm.metrics.entriesEvictedTotal))
+
+	// loadSnapshot enforces the limit for state loaded on startup.
+	lsnap := newLog(2*entrySize + entrySize/2)
+	require.NoError(t, lsnap.loadSnapshot(bytes.NewReader(b)))
+	require.LessOrEqual(t, lsnap.size, lsnap.limits.MaxSizeBytes())
+	require.Positive(t, testutil.ToFloat64(lsnap.metrics.entriesEvictedTotal))
 }
 
 func TestLogSnapshot(t *testing.T) {
@@ -189,7 +211,7 @@ func TestLogSnapshot(t *testing.T) {
 		require.NoError(t, err, "opening snapshot file failed")
 
 		// Check again against new nlog instance.
-		l2 := &Log{}
+		l2 := &Log{metrics: newMetrics(nil)}
 		err = l2.loadSnapshot(f)
 		require.NoError(t, err, "error loading snapshot")
 		require.Equal(t, l1.st, l2.st, "state after loading snapshot did not match snapshotted state")

@@ -592,6 +592,11 @@ func (l *Log) loadSnapshot(r io.Reader) error {
 	l.mtx.Lock()
 	l.st = st
 	l.size = st.sizeBytes()
+	// A snapshot loaded on startup may already exceed the limit (e.g. it predates
+	// the limit, or grew while the limit was unset), so trim it now rather than
+	// waiting for the next local write.
+	l.evictToLimit()
+	l.metrics.size.Set(float64(l.size))
 	l.mtx.Unlock()
 
 	return nil
@@ -644,6 +649,10 @@ func (l *Log) Merge(b []byte) error {
 			level.Debug(l.logger).Log("msg", "gossiping new entry", "entry", e)
 		}
 	}
+	// Entries also arrive via Merge from peers, not just local Log writes, so
+	// enforce the size limit here as well. Otherwise the log could grow past the
+	// limit on a node that rarely writes locally.
+	l.evictToLimit()
 	l.metrics.size.Set(float64(l.size))
 	return nil
 }
