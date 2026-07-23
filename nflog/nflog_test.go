@@ -77,76 +77,52 @@ func TestLogMaxSizeBytes(t *testing.T) {
 		}
 	}
 
-	// Measure one entry's size (limit 0 = no eviction).
+	// Measure one entry's serialized size with no limit.
 	measure := newLog(0)
 	require.NoError(t, measure.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
-	entrySize := measure.size
+	one, err := measure.MarshalBinary()
+	require.NoError(t, err)
+	entrySize := len(one)
 	require.Positive(t, entrySize)
 
-	// Allow between two and three entries so two fit comfortably and a third evicts.
+	// Room for ~2 entries once serialized.
 	l := newLog(2*entrySize + entrySize/2)
-	require.NoError(t, l.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
 	mockClock.Add(time.Second)
-	require.NoError(t, l.Log(rcv(2), "gk2", []uint64{2}, nil, 0))
-	require.Len(t, l.st, 2)
+	require.NoError(t, l.Log(rcv(1), "gk1", []uint64{1}, nil, 0)) // firing, oldest
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(2), "gk2", nil, []uint64{2}, 0)) // resolved
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(3), "gk3", []uint64{3}, nil, 0)) // firing, newest
 
-	// A third entry evicts the oldest (gk1), keeping the two most recent entries.
-	mockClock.Add(time.Second)
-	require.NoError(t, l.Log(rcv(3), "gk3", []uint64{3}, nil, 0))
-	require.Len(t, l.st, 2)
-	require.LessOrEqual(t, l.size, l.limits.MaxSizeBytes())
-	require.NotContains(t, l.st, stateKey("gk1", rcv(1)))
-	require.Contains(t, l.st, stateKey("gk2", rcv(2)))
-	require.Contains(t, l.st, stateKey("gk3", rcv(3)))
-	require.Equal(t, 1.0, testutil.ToFloat64(l.metrics.entriesEvictedTotal))
+	// The in-memory log is never trimmed, regardless of the limit.
+	require.Len(t, l.st, 3)
 
-	// Updating an existing key never evicts and never rejects.
-	mockClock.Add(time.Second)
-	require.NoError(t, l.Log(rcv(2), "gk2", []uint64{2, 3}, nil, 0))
-	require.Len(t, l.st, 2)
-	require.Contains(t, l.st, stateKey("gk2", rcv(2)))
+	// Serializing trims to the limit, keeping firing/newest and dropping the
+	// resolved entry first.
+	b, err := l.MarshalBinary()
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(b), l.limits.MaxSizeBytes())
+	loaded, err := decodeState(bytes.NewReader(b))
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+	require.Contains(t, loaded, stateKey("gk3", rcv(3)))    // newest firing kept
+	require.Contains(t, loaded, stateKey("gk1", rcv(1)))    // firing kept over resolved
+	require.NotContains(t, loaded, stateKey("gk2", rcv(2))) // resolved dropped first
+	require.Equal(t, 1.0, testutil.ToFloat64(l.metrics.snapshotEntriesDropped))
 
-	// Eviction prefers resolved entries over older firing entries.
-	lr := newLog(2*entrySize + entrySize/2)
-	mockClock.Add(time.Second)
-	require.NoError(t, lr.Log(rcv(1), "gk1", []uint64{1}, nil, 0)) // firing, oldest
-	mockClock.Add(time.Second)
-	require.NoError(t, lr.Log(rcv(2), "gk2", nil, []uint64{2}, 0)) // resolved, newer
-	require.Len(t, lr.st, 2)
-	mockClock.Add(time.Second)
-	require.NoError(t, lr.Log(rcv(3), "gk3", []uint64{3}, nil, 0)) // firing, newest, triggers eviction
-	require.Len(t, lr.st, 2)
-	require.NotContains(t, lr.st, stateKey("gk2", rcv(2)), "resolved entry should be evicted first")
-	require.Contains(t, lr.st, stateKey("gk1", rcv(1)), "older firing entry should be retained over a resolved one")
-	require.Contains(t, lr.st, stateKey("gk3", rcv(3)))
+	// Serializing does not modify the in-memory log.
+	require.Len(t, l.st, 3)
 
-	// A limit of 0 disables eviction.
+	// With no limit, everything is serialized.
 	l0 := newLog(0)
 	require.NoError(t, l0.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
 	require.NoError(t, l0.Log(rcv(2), "gk2", []uint64{2}, nil, 0))
 	require.NoError(t, l0.Log(rcv(3), "gk3", []uint64{3}, nil, 0))
-	require.Len(t, l0.st, 3)
-
-	// Build a marshaled state with more entries than the limit allows.
-	src := newLog(0)
-	for _, gk := range []string{"mg1", "mg2", "mg3", "mg4", "mg5"} {
-		mockClock.Add(time.Second)
-		require.NoError(t, src.Log(rcv(1), gk, []uint64{1}, nil, 0))
-	}
-	b, err := src.st.MarshalBinary()
+	b0, err := l0.MarshalBinary()
 	require.NoError(t, err)
-
-	// Merge (gossip) enforces the limit, not just local writes.
-	lm := newLog(2*entrySize + entrySize/2)
-	require.NoError(t, lm.Merge(b))
-	require.LessOrEqual(t, lm.size, lm.limits.MaxSizeBytes())
-	require.Positive(t, testutil.ToFloat64(lm.metrics.entriesEvictedTotal))
-
-	// loadSnapshot enforces the limit for state loaded on startup.
-	lsnap := newLog(2*entrySize + entrySize/2)
-	require.NoError(t, lsnap.loadSnapshot(bytes.NewReader(b)))
-	require.LessOrEqual(t, lsnap.size, lsnap.limits.MaxSizeBytes())
-	require.Positive(t, testutil.ToFloat64(lsnap.metrics.entriesEvictedTotal))
+	loaded0, err := decodeState(bytes.NewReader(b0))
+	require.NoError(t, err)
+	require.Len(t, loaded0, 3)
 }
 
 func TestLogSnapshot(t *testing.T) {
@@ -211,7 +187,7 @@ func TestLogSnapshot(t *testing.T) {
 		require.NoError(t, err, "opening snapshot file failed")
 
 		// Check again against new nlog instance.
-		l2 := &Log{metrics: newMetrics(nil)}
+		l2 := &Log{}
 		err = l2.loadSnapshot(f)
 		require.NoError(t, err, "error loading snapshot")
 		require.Equal(t, l1.st, l2.st, "state after loading snapshot did not match snapshotted state")

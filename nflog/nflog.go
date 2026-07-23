@@ -86,25 +86,19 @@ type Log struct {
 
 	// For now we only store the most recently added log entry.
 	// The key is a serialized concatenation of group key and receiver.
-	mtx sync.RWMutex
-	st  state
-	// size is the running sum of the marshaled sizes of all entries in st, used to
-	// enforce Limits.MaxSizeBytes without recomputing the whole state on each write.
-	size               int
+	mtx                sync.RWMutex
+	st                 state
 	broadcast          func([]byte)
 	isReliableDelivery func([]byte) bool
 }
 
 // Limits contains the limits for the notification log.
 type Limits struct {
-	// MaxSizeBytes limits the total marshaled size of the notification log in
-	// bytes. If nil, or the returned value is negative or 0, there is no limit.
-	//
-	// When recording a notification would push the log over the limit, existing
-	// entries are evicted until it fits again: resolved entries first, then oldest
-	// by last-notification time. Because the notification has already been sent by
-	// the time it is logged, an evicted group is at worst re-notified later (a
-	// duplicate), never missed.
+	// MaxSizeBytes limits the serialized size (in bytes) of the notification log
+	// used for snapshots and state replication. When it is exceeded, the
+	// lowest-priority entries (resolved and oldest first) are omitted from the
+	// serialized copy. The in-memory log is never trimmed. Negative or 0 means no
+	// limit.
 	MaxSizeBytes func() int
 }
 
@@ -122,8 +116,7 @@ type metrics struct {
 	propagatedMessagesTotal prometheus.Counter
 	maintenanceTotal        prometheus.Counter
 	maintenanceErrorsTotal  prometheus.Counter
-	size                    prometheus.Gauge
-	entriesEvictedTotal     prometheus.Counter
+	snapshotEntriesDropped  prometheus.Counter
 }
 
 func newMetrics(r prometheus.Registerer) *metrics {
@@ -171,13 +164,9 @@ func newMetrics(r prometheus.Registerer) *metrics {
 		Name: "alertmanager_nflog_gossip_messages_propagated_total",
 		Help: "Number of received gossip messages that have been further gossiped.",
 	})
-	m.size = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "alertmanager_nflog_size_bytes",
-		Help: "Current total marshaled size of the notification log in bytes.",
-	})
-	m.entriesEvictedTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "alertmanager_nflog_entries_evicted_total",
-		Help: "Number of notification log entries evicted (oldest first) to keep the log within the configured maximum size.",
+	m.snapshotEntriesDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "alertmanager_nflog_snapshot_entries_dropped_total",
+		Help: "Number of notification log entries omitted from a serialized snapshot because it would exceed the configured maximum size.",
 	})
 
 	if r != nil {
@@ -191,8 +180,7 @@ func newMetrics(r prometheus.Registerer) *metrics {
 			m.propagatedMessagesTotal,
 			m.maintenanceTotal,
 			m.maintenanceErrorsTotal,
-			m.size,
-			m.entriesEvictedTotal,
+			m.snapshotEntriesDropped,
 		)
 	}
 	return m
@@ -208,36 +196,20 @@ func (s state) clone() state {
 	return c
 }
 
-// merge stores the entry if it is newer than the existing one for its key. It
-// returns whether the entry was stored (used to decide whether to gossip the
-// message further) and the resulting change (in bytes) to the total marshaled size
-// of the state.
-func (s state) merge(e *pb.MeshEntry, now time.Time) (bool, int) {
+// merge returns true or false whether the MeshEntry was merged or
+// not. This information is used to decide to gossip the message further.
+func (s state) merge(e *pb.MeshEntry, now time.Time) bool {
 	if e.ExpiresAt.Before(now) {
-		return false, 0
+		return false
 	}
 	k := stateKey(string(e.Entry.GroupKey), e.Entry.Receiver)
 
 	prev, ok := s[k]
-	if !ok {
+	if !ok || prev.Entry.Timestamp.Before(e.Entry.Timestamp) {
 		s[k] = e
-		return true, e.Size()
+		return true
 	}
-	if prev.Entry.Timestamp.Before(e.Entry.Timestamp) {
-		s[k] = e
-		return true, e.Size() - prev.Size()
-	}
-	return false, 0
-}
-
-// sizeBytes returns the sum of the marshaled sizes of all entries. This matches
-// the unit tracked incrementally by Log.size.
-func (s state) sizeBytes() int {
-	var n int
-	for _, e := range s {
-		n += e.Size()
-	}
-	return n
+	return false
 }
 
 func (s state) MarshalBinary() ([]byte, error) {
@@ -435,11 +407,10 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	_, isUpdate := l.st[key]
-	if isUpdate {
+	if prevle, ok := l.st[key]; ok {
 		// Entry already exists, only overwrite if timestamp is newer.
 		// This may happen with raciness or clock-drift across AM nodes.
-		if l.st[key].Entry.Timestamp.After(now) {
+		if prevle.Entry.Timestamp.After(now) {
 			return nil
 		}
 	}
@@ -464,61 +435,54 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 	if err != nil {
 		return err
 	}
-
-	_, delta := l.st.merge(e, l.now())
-	l.size += delta
-
-	// Enforce the size limit by evicting existing entries (resolved first, then
-	// oldest by last-notification time) until the log is within the limit. Evicting
-	// rather than rejecting the new entry keeps the most recently active groups
-	// recorded. The evicted entries are the least likely to be re-notified. The
-	// notification has already been sent by this point, so at worst this re-notifies
-	// an evicted group (a duplicate) later, never a missed notification.
-	l.evictToLimit()
-
-	l.metrics.size.Set(float64(l.size))
+	l.st.merge(e, l.now())
 	l.broadcast(b)
 
 	return nil
 }
 
-// evictToLimit removes entries until the total marshaled size is within
-// Limits.MaxSizeBytes, preferring resolved entries and then the oldest (by last
-// notification time). Caller must hold l.mtx.
-func (l *Log) evictToLimit() {
-	if l.limits.MaxSizeBytes == nil {
-		return
+// marshalStateWithinLimit serializes the log without modifying it, keeping entries
+// in priority order (firing before resolved, newest before oldest) up to
+// Limits.MaxSizeBytes and omitting the rest. Caller must hold l.mtx.
+func (l *Log) marshalStateWithinLimit() ([]byte, error) {
+	max := 0
+	if l.limits.MaxSizeBytes != nil {
+		max = l.limits.MaxSizeBytes()
 	}
-	max := l.limits.MaxSizeBytes()
-	if max <= 0 || l.size <= max {
-		return
+	if max <= 0 {
+		return l.st.MarshalBinary()
 	}
 
-	// Order the evictable keys resolved-first, then oldest-first within each tier.
-	// Evicting a resolved entry (no firing alerts) risks at most a duplicate
-	// resolved notification, whereas evicting a firing entry risks a duplicate page,
-	// so drop the harmless records before the harmful ones.
 	keys := make([]string, 0, len(l.st))
 	for k := range l.st {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
 		ei, ej := l.st[keys[i]].Entry, l.st[keys[j]].Entry
-		ri, rj := len(ei.FiringAlerts) == 0, len(ej.FiringAlerts) == 0
-		if ri != rj {
-			return ri // resolved (no firing alerts) evicted first
+		fi, fj := len(ei.FiringAlerts) > 0, len(ej.FiringAlerts) > 0
+		if fi != fj {
+			return fi // keep firing before resolved
 		}
-		return ei.Timestamp.Before(ej.Timestamp) // then oldest-first
+		return ei.Timestamp.After(ej.Timestamp) // keep newest before oldest
 	})
 
+	var buf bytes.Buffer
+	var dropped int
 	for _, k := range keys {
-		if l.size <= max {
-			break
+		eb, err := marshalMeshEntry(l.st[k])
+		if err != nil {
+			return nil, err
 		}
-		l.size -= l.st[k].Size()
-		delete(l.st, k)
-		l.metrics.entriesEvictedTotal.Inc()
+		if buf.Len()+len(eb) > max {
+			dropped++
+			continue
+		}
+		buf.Write(eb)
 	}
+	if dropped > 0 {
+		l.metrics.snapshotEntriesDropped.Add(float64(dropped))
+	}
+	return buf.Bytes(), nil
 }
 
 // GC implements the Log interface.
@@ -537,12 +501,10 @@ func (l *Log) GC() (int, error) {
 			return n, errors.New("unexpected zero expiration timestamp")
 		}
 		if !le.ExpiresAt.After(now) {
-			l.size -= le.Size()
 			delete(l.st, k)
 			n++
 		}
 	}
-	l.metrics.size.Set(float64(l.size))
 
 	return n, nil
 }
@@ -591,12 +553,6 @@ func (l *Log) loadSnapshot(r io.Reader) error {
 
 	l.mtx.Lock()
 	l.st = st
-	l.size = st.sizeBytes()
-	// A snapshot loaded on startup may already exceed the limit (e.g. it predates
-	// the limit, or grew while the limit was unset), so trim it now rather than
-	// waiting for the next local write.
-	l.evictToLimit()
-	l.metrics.size.Set(float64(l.size))
 	l.mtx.Unlock()
 
 	return nil
@@ -610,7 +566,7 @@ func (l *Log) Snapshot(w io.Writer) (int64, error) {
 	l.mtx.RLock()
 	defer l.mtx.RUnlock()
 
-	b, err := l.st.MarshalBinary()
+	b, err := l.marshalStateWithinLimit()
 	if err != nil {
 		return 0, err
 	}
@@ -623,7 +579,7 @@ func (l *Log) MarshalBinary() ([]byte, error) {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	return l.st.MarshalBinary()
+	return l.marshalStateWithinLimit()
 }
 
 // Merge merges notification log state received from the cluster with the local state.
@@ -637,9 +593,7 @@ func (l *Log) Merge(b []byte) error {
 	now := l.now()
 
 	for _, e := range st {
-		merged, delta := l.st.merge(e, now)
-		l.size += delta
-		if merged && !l.isReliableDelivery(b) {
+		if merged := l.st.merge(e, now); merged && !l.isReliableDelivery(b) {
 			// If this is the first we've seen the message and it was
 			// not sent reliably to all nodes, gossip it to other nodes.
 			// We don't propagate reliable messages because they're
@@ -649,11 +603,6 @@ func (l *Log) Merge(b []byte) error {
 			level.Debug(l.logger).Log("msg", "gossiping new entry", "entry", e)
 		}
 	}
-	// Entries also arrive via Merge from peers, not just local Log writes, so
-	// enforce the size limit here as well. Otherwise the log could grow past the
-	// limit on a node that rarely writes locally.
-	l.evictToLimit()
-	l.metrics.size.Set(float64(l.size))
 	return nil
 }
 
