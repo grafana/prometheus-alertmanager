@@ -113,6 +113,24 @@ func TestLogMaxSnapshotSizeBytes(t *testing.T) {
 	// Serializing does not modify the in-memory log.
 	require.Len(t, l.st, 3)
 
+	// Expired entries are excluded from the serialized snapshot (they would be
+	// discarded on merge anyway) and do not consume budget.
+	le := newLog(1 << 20) // generous limit, so exclusion is due to expiry, not size
+	mockClock.Add(time.Second)
+	require.NoError(t, le.Log(rcv(1), "live", []uint64{1}, nil, 0))
+	le.st[stateKey("expired", rcv(2))] = &pb.MeshEntry{
+		Entry:     &pb.Entry{Receiver: rcv(2), GroupKey: []byte("expired"), Timestamp: mockClock.Now(), FiringAlerts: []uint64{2}},
+		ExpiresAt: mockClock.Now().Add(-time.Hour),
+	}
+	require.Len(t, le.st, 2)
+	be, err := le.MarshalBinary()
+	require.NoError(t, err)
+	loadedE, err := decodeState(bytes.NewReader(be))
+	require.NoError(t, err)
+	require.Len(t, loadedE, 1)
+	require.Contains(t, loadedE, stateKey("live", rcv(1)))
+	require.NotContains(t, loadedE, stateKey("expired", rcv(2)))
+
 	// With no limit, everything is serialized.
 	l0 := newLog(0)
 	require.NoError(t, l0.Log(rcv(1), "gk1", []uint64{1}, nil, 0))

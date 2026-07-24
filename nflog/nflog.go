@@ -452,8 +452,14 @@ func (l *Log) marshalStateWithinLimit() ([]byte, error) {
 		return l.st.MarshalBinary()
 	}
 
+	// Skip expired entries: a peer discards them on merge, so they would only waste
+	// budget and push out live entries.
+	now := l.now()
 	keys := make([]string, 0, len(l.st))
-	for k := range l.st {
+	for k, e := range l.st {
+		if e.ExpiresAt.Before(now) {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
