@@ -94,12 +94,11 @@ type Log struct {
 
 // Limits contains the limits for the notification log.
 type Limits struct {
-	// MaxSizeBytes limits the serialized size (in bytes) of the notification log
-	// used for snapshots and state replication. When it is exceeded, the
-	// lowest-priority entries (resolved and oldest first) are omitted from the
-	// serialized copy. The in-memory log is never trimmed. Negative or 0 means no
-	// limit.
-	MaxSizeBytes func() int
+	// MaxSnapshotSizeBytes limits the serialized size of the notification log snapshot.
+	// When it would exceed the limit, entries are dropped from the serialized copy,
+	// preferring to keep firing over resolved, and newer over older.
+	// The in-memory log is never trimmed. Negative or 0 means no limit.
+	MaxSnapshotSizeBytes func() int
 }
 
 // MaintenanceFunc represents the function to run as part of the periodic maintenance for the nflog.
@@ -441,13 +440,13 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 	return nil
 }
 
-// marshalStateWithinLimit serializes the log without modifying it, keeping entries
-// in priority order (firing before resolved, newest before oldest) up to
-// Limits.MaxSizeBytes and omitting the rest. Caller must hold l.mtx.
+// marshalStateWithinLimit serializes the log without modifying it, dropping entries
+// to fit Limits.MaxSnapshotSizeBytes and preferring to keep firing over resolved
+// and newer over older. Caller must hold l.mtx.
 func (l *Log) marshalStateWithinLimit() ([]byte, error) {
 	max := 0
-	if l.limits.MaxSizeBytes != nil {
-		max = l.limits.MaxSizeBytes()
+	if l.limits.MaxSnapshotSizeBytes != nil {
+		max = l.limits.MaxSnapshotSizeBytes()
 	}
 	if max <= 0 {
 		return l.st.MarshalBinary()

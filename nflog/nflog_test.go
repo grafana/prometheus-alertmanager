@@ -60,7 +60,7 @@ func TestLogGC(t *testing.T) {
 	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
 }
 
-func TestLogMaxSizeBytes(t *testing.T) {
+func TestLogMaxSnapshotSizeBytes(t *testing.T) {
 	mockClock := clock.NewMock()
 	rcv := func(i int) *pb.Receiver {
 		return &pb.Receiver{GroupName: "g", Integration: "test", Idx: uint32(i)}
@@ -69,7 +69,7 @@ func TestLogMaxSizeBytes(t *testing.T) {
 		return &Log{
 			clock:              mockClock,
 			retention:          time.Hour,
-			limits:             Limits{MaxSizeBytes: func() int { return limit }},
+			limits:             Limits{MaxSnapshotSizeBytes: func() int { return limit }},
 			st:                 state{},
 			broadcast:          func([]byte) {},
 			isReliableDelivery: func([]byte) bool { return true },
@@ -101,7 +101,7 @@ func TestLogMaxSizeBytes(t *testing.T) {
 	// resolved entry first.
 	b, err := l.MarshalBinary()
 	require.NoError(t, err)
-	require.LessOrEqual(t, len(b), l.limits.MaxSizeBytes())
+	require.LessOrEqual(t, len(b), l.limits.MaxSnapshotSizeBytes())
 	loaded, err := decodeState(bytes.NewReader(b))
 	require.NoError(t, err)
 	require.Len(t, loaded, 2)
