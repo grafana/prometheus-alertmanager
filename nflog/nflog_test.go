@@ -60,6 +60,89 @@ func TestLogGC(t *testing.T) {
 	require.Equal(t, expected, l.st, "unexpected state after garbage collection")
 }
 
+func TestLogMaxSnapshotSizeBytes(t *testing.T) {
+	mockClock := clock.NewMock()
+	rcv := func(i int) *pb.Receiver {
+		return &pb.Receiver{GroupName: "g", Integration: "test", Idx: uint32(i)}
+	}
+	newLog := func(limit int) *Log {
+		return &Log{
+			clock:              mockClock,
+			retention:          time.Hour,
+			limits:             Limits{MaxSnapshotSizeBytes: func() int { return limit }},
+			st:                 state{},
+			broadcast:          func([]byte) {},
+			isReliableDelivery: func([]byte) bool { return true },
+			metrics:            newMetrics(nil),
+		}
+	}
+
+	// Measure one entry's serialized size with no limit.
+	measure := newLog(0)
+	require.NoError(t, measure.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
+	one, err := measure.MarshalBinary()
+	require.NoError(t, err)
+	entrySize := len(one)
+	require.Positive(t, entrySize)
+
+	// Room for ~2 entries once serialized.
+	l := newLog(2*entrySize + entrySize/2)
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(1), "gk1", []uint64{1}, nil, 0)) // firing, oldest
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(2), "gk2", nil, []uint64{2}, 0)) // resolved
+	mockClock.Add(time.Second)
+	require.NoError(t, l.Log(rcv(3), "gk3", []uint64{3}, nil, 0)) // firing, newest
+
+	// The in-memory log is never trimmed, regardless of the limit.
+	require.Len(t, l.st, 3)
+
+	// Serializing trims to the limit, keeping firing/newest and dropping the
+	// resolved entry first.
+	b, err := l.MarshalBinary()
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(b), l.limits.MaxSnapshotSizeBytes())
+	loaded, err := decodeState(bytes.NewReader(b))
+	require.NoError(t, err)
+	require.Len(t, loaded, 2)
+	require.Contains(t, loaded, stateKey("gk3", rcv(3)))    // newest firing kept
+	require.Contains(t, loaded, stateKey("gk1", rcv(1)))    // firing kept over resolved
+	require.NotContains(t, loaded, stateKey("gk2", rcv(2))) // resolved dropped first
+	require.Equal(t, 1.0, testutil.ToFloat64(l.metrics.snapshotEntriesDropped))
+
+	// Serializing does not modify the in-memory log.
+	require.Len(t, l.st, 3)
+
+	// Expired entries are excluded from the serialized snapshot (they would be
+	// discarded on merge anyway) and do not consume budget.
+	le := newLog(1 << 20) // generous limit, so exclusion is due to expiry, not size
+	mockClock.Add(time.Second)
+	require.NoError(t, le.Log(rcv(1), "live", []uint64{1}, nil, 0))
+	le.st[stateKey("expired", rcv(2))] = &pb.MeshEntry{
+		Entry:     &pb.Entry{Receiver: rcv(2), GroupKey: []byte("expired"), Timestamp: mockClock.Now(), FiringAlerts: []uint64{2}},
+		ExpiresAt: mockClock.Now().Add(-time.Hour),
+	}
+	require.Len(t, le.st, 2)
+	be, err := le.MarshalBinary()
+	require.NoError(t, err)
+	loadedE, err := decodeState(bytes.NewReader(be))
+	require.NoError(t, err)
+	require.Len(t, loadedE, 1)
+	require.Contains(t, loadedE, stateKey("live", rcv(1)))
+	require.NotContains(t, loadedE, stateKey("expired", rcv(2)))
+
+	// With no limit, everything is serialized.
+	l0 := newLog(0)
+	require.NoError(t, l0.Log(rcv(1), "gk1", []uint64{1}, nil, 0))
+	require.NoError(t, l0.Log(rcv(2), "gk2", []uint64{2}, nil, 0))
+	require.NoError(t, l0.Log(rcv(3), "gk3", []uint64{3}, nil, 0))
+	b0, err := l0.MarshalBinary()
+	require.NoError(t, err)
+	loaded0, err := decodeState(bytes.NewReader(b0))
+	require.NoError(t, err)
+	require.Len(t, loaded0, 3)
+}
+
 func TestLogSnapshot(t *testing.T) {
 	// Check whether storing and loading the snapshot is symmetric.
 	mockClock := clock.NewMock()
