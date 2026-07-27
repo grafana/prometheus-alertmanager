@@ -24,6 +24,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -81,6 +82,7 @@ type Log struct {
 	logger    log.Logger
 	metrics   *metrics
 	retention time.Duration
+	limits    Limits
 
 	// For now we only store the most recently added log entry.
 	// The key is a serialized concatenation of group key and receiver.
@@ -88,6 +90,15 @@ type Log struct {
 	st                 state
 	broadcast          func([]byte)
 	isReliableDelivery func([]byte) bool
+}
+
+// Limits contains the limits for the notification log.
+type Limits struct {
+	// MaxSnapshotSizeBytes limits the serialized size of the notification log snapshot.
+	// When it would exceed the limit, entries are dropped from the serialized copy,
+	// preferring to keep firing over resolved, and newer over older.
+	// The in-memory log is never trimmed. Negative or 0 means no limit.
+	MaxSnapshotSizeBytes func() int
 }
 
 // MaintenanceFunc represents the function to run as part of the periodic maintenance for the nflog.
@@ -104,6 +115,7 @@ type metrics struct {
 	propagatedMessagesTotal prometheus.Counter
 	maintenanceTotal        prometheus.Counter
 	maintenanceErrorsTotal  prometheus.Counter
+	snapshotEntriesDropped  prometheus.Counter
 }
 
 func newMetrics(r prometheus.Registerer) *metrics {
@@ -151,6 +163,10 @@ func newMetrics(r prometheus.Registerer) *metrics {
 		Name: "alertmanager_nflog_gossip_messages_propagated_total",
 		Help: "Number of received gossip messages that have been further gossiped.",
 	})
+	m.snapshotEntriesDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "alertmanager_nflog_snapshot_entries_dropped_total",
+		Help: "Number of notification log entries omitted from a serialized snapshot because it would exceed the configured maximum size.",
+	})
 
 	if r != nil {
 		r.MustRegister(
@@ -163,6 +179,7 @@ func newMetrics(r prometheus.Registerer) *metrics {
 			m.propagatedMessagesTotal,
 			m.maintenanceTotal,
 			m.maintenanceErrorsTotal,
+			m.snapshotEntriesDropped,
 		)
 	}
 	return m
@@ -239,6 +256,7 @@ type Options struct {
 	SnapshotFile   string
 
 	Retention time.Duration
+	Limits    Limits
 
 	Logger  log.Logger
 	Metrics prometheus.Registerer
@@ -262,6 +280,7 @@ func New(o Options) (*Log, error) {
 	l := &Log{
 		clock:              clock.New(),
 		retention:          o.Retention,
+		limits:             o.Limits,
 		logger:             log.NewNopLogger(),
 		st:                 state{},
 		broadcast:          func([]byte) {},
@@ -421,6 +440,56 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 	return nil
 }
 
+// marshalStateWithinLimit serializes the log without modifying it, dropping entries
+// to fit Limits.MaxSnapshotSizeBytes and preferring to keep firing over resolved
+// and newer over older. Caller must hold l.mtx.
+func (l *Log) marshalStateWithinLimit() ([]byte, error) {
+	max := 0
+	if l.limits.MaxSnapshotSizeBytes != nil {
+		max = l.limits.MaxSnapshotSizeBytes()
+	}
+	if max <= 0 {
+		return l.st.MarshalBinary()
+	}
+
+	// Skip expired entries: a peer discards them on merge, so they would only waste
+	// budget and push out live entries.
+	now := l.now()
+	keys := make([]string, 0, len(l.st))
+	for k, e := range l.st {
+		if e.ExpiresAt.Before(now) {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		ei, ej := l.st[keys[i]].Entry, l.st[keys[j]].Entry
+		fi, fj := len(ei.FiringAlerts) > 0, len(ej.FiringAlerts) > 0
+		if fi != fj {
+			return fi // keep firing before resolved
+		}
+		return ei.Timestamp.After(ej.Timestamp) // keep newest before oldest
+	})
+
+	var buf bytes.Buffer
+	var dropped int
+	for _, k := range keys {
+		eb, err := marshalMeshEntry(l.st[k])
+		if err != nil {
+			return nil, err
+		}
+		if buf.Len()+len(eb) > max {
+			dropped++
+			continue
+		}
+		buf.Write(eb)
+	}
+	if dropped > 0 {
+		l.metrics.snapshotEntriesDropped.Add(float64(dropped))
+	}
+	return buf.Bytes(), nil
+}
+
 // GC implements the Log interface.
 func (l *Log) GC() (int, error) {
 	start := time.Now()
@@ -502,7 +571,7 @@ func (l *Log) Snapshot(w io.Writer) (int64, error) {
 	l.mtx.RLock()
 	defer l.mtx.RUnlock()
 
-	b, err := l.st.MarshalBinary()
+	b, err := l.marshalStateWithinLimit()
 	if err != nil {
 		return 0, err
 	}
@@ -515,7 +584,7 @@ func (l *Log) MarshalBinary() ([]byte, error) {
 	l.mtx.Lock()
 	defer l.mtx.Unlock()
 
-	return l.st.MarshalBinary()
+	return l.marshalStateWithinLimit()
 }
 
 // Merge merges notification log state received from the cluster with the local state.
