@@ -187,9 +187,13 @@ var (
 		NotifierConfig: NotifierConfig{
 			VSendResolved: true,
 		},
-		Summary:     `{{ template "jira.default.summary" . }}`,
-		Description: `{{ template "jira.default.description" . }}`,
-		Priority:    `{{ template "jira.default.priority" . }}`,
+		Summary: JiraFieldConfig{
+			Template: `{{ template "jira.default.summary" . }}`,
+		},
+		Description: JiraFieldConfig{
+			Template: `{{ template "jira.default.description" . }}`,
+		},
+		Priority: `{{ template "jira.default.priority" . }}`,
 	}
 )
 
@@ -876,18 +880,24 @@ func (c *MSTeamsV2Config) UnmarshalYAML(unmarshal func(interface{}) error) error
 	return nil
 }
 
+type JiraFieldConfig struct {
+	Template string `yaml:"template,omitempty" json:"template,omitempty"`
+	// When false, omit this field when updating an existing issue.
+	EnableUpdate *bool `yaml:"enable_update,omitempty" json:"enable_update,omitempty"`
+}
+
 type JiraConfig struct {
 	NotifierConfig `yaml:",inline" json:",inline"`
 	HTTPConfig     *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
 	APIURL *URL `yaml:"api_url,omitempty" json:"api_url,omitempty"`
 
-	Project     string   `yaml:"project,omitempty" json:"project,omitempty"`
-	Summary     string   `yaml:"summary,omitempty" json:"summary,omitempty"`
-	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
-	Labels      []string `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Priority    string   `yaml:"priority,omitempty" json:"priority,omitempty"`
-	IssueType   string   `yaml:"issue_type,omitempty" json:"issue_type,omitempty"`
+	Project     string          `yaml:"project,omitempty" json:"project,omitempty"`
+	Summary     JiraFieldConfig `yaml:"summary,omitempty" json:"summary,omitempty"`
+	Description JiraFieldConfig `yaml:"description,omitempty" json:"description,omitempty"`
+	Labels      []string        `yaml:"labels,omitempty" json:"labels,omitempty"`
+	Priority    string          `yaml:"priority,omitempty" json:"priority,omitempty"`
+	IssueType   string          `yaml:"issue_type,omitempty" json:"issue_type,omitempty"`
 
 	ReopenTransition  string         `yaml:"reopen_transition,omitempty" json:"reopen_transition,omitempty"`
 	ResolveTransition string         `yaml:"resolve_transition,omitempty" json:"resolve_transition,omitempty"`
@@ -895,6 +905,25 @@ type JiraConfig struct {
 	ReopenDuration    model.Duration `yaml:"reopen_duration,omitempty" json:"reopen_duration,omitempty"`
 
 	Fields map[string]any `yaml:"fields,omitempty" json:"custom_fields,omitempty"`
+}
+
+func (f *JiraFieldConfig) EnableUpdateValue() bool {
+	if f.EnableUpdate == nil {
+		return true
+	}
+
+	return *f.EnableUpdate
+}
+
+func (f *JiraFieldConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var tmpl string
+	if err := unmarshal(&tmpl); err == nil {
+		f.Template = tmpl
+		return nil
+	}
+
+	type plain JiraFieldConfig
+	return unmarshal((*plain)(f))
 }
 
 func (c *JiraConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
