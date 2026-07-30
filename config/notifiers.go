@@ -825,9 +825,10 @@ type MSTeamsConfig struct {
 	WebhookURL     *SecretURL                  `yaml:"webhook_url,omitempty" json:"webhook_url,omitempty"`
 	WebhookURLFile string                      `yaml:"webhook_url_file,omitempty" json:"webhook_url_file,omitempty"`
 
-	Title   string `yaml:"title,omitempty" json:"title,omitempty"`
-	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
-	Text    string `yaml:"text,omitempty" json:"text,omitempty"`
+	Title      string `yaml:"title,omitempty" json:"title,omitempty"`
+	Summary    string `yaml:"summary,omitempty" json:"summary,omitempty"`
+	Text       string `yaml:"text,omitempty" json:"text,omitempty"`
+	RawMessage string `yaml:"raw_message,omitempty" json:"raw_message,omitempty"`
 }
 
 func (c *MSTeamsConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
