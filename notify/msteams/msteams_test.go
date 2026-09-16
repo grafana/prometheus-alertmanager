@@ -30,7 +30,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
@@ -42,7 +41,7 @@ var testWebhookURL, _ = url.Parse("https://example.webhook.office.com/webhookb2/
 
 func TestMSTeamsRetry(t *testing.T) {
 	notifier, err := New(
-		&config.MSTeamsConfig{
+		&MSTeamsConfig{
 			WebhookURL: &amcommoncfg.SecretURL{URL: testWebhookURL},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -71,14 +70,14 @@ func TestMSTeamsTemplating(t *testing.T) {
 
 	for _, tc := range []struct {
 		title string
-		cfg   *config.MSTeamsConfig
+		cfg   *MSTeamsConfig
 
 		retry  bool
 		errMsg string
 	}{
 		{
 			title: "full-blown message",
-			cfg: &config.MSTeamsConfig{
+			cfg: &MSTeamsConfig{
 				Title:   `{{ template "msteams.default.title" . }}`,
 				Summary: `{{ template "msteams.default.summary" . }}`,
 				Text:    `{{ template "msteams.default.text" . }}`,
@@ -87,14 +86,14 @@ func TestMSTeamsTemplating(t *testing.T) {
 		},
 		{
 			title: "title with templating errors",
-			cfg: &config.MSTeamsConfig{
+			cfg: &MSTeamsConfig{
 				Title: "{{ ",
 			},
 			errMsg: "template: :1: unclosed action",
 		},
 		{
 			title: "summary with templating errors",
-			cfg: &config.MSTeamsConfig{
+			cfg: &MSTeamsConfig{
 				Title:   `{{ template "msteams.default.title" . }}`,
 				Summary: "{{ ",
 			},
@@ -102,7 +101,7 @@ func TestMSTeamsTemplating(t *testing.T) {
 		},
 		{
 			title: "message with templating errors",
-			cfg: &config.MSTeamsConfig{
+			cfg: &MSTeamsConfig{
 				Title:   `{{ template "msteams.default.title" . }}`,
 				Summary: `{{ template "msteams.default.summary" . }}`,
 				Text:    "{{ ",
@@ -266,7 +265,7 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			notifier, err := New(
-				&config.MSTeamsConfig{
+				&MSTeamsConfig{
 					WebhookURL: &amcommoncfg.SecretURL{URL: testWebhookURL},
 					HTTPConfig: &commoncfg.HTTPClientConfig{},
 				},
@@ -326,7 +325,7 @@ func TestMSTeamsRedactedURL(t *testing.T) {
 
 	secret := "secret"
 	notifier, err := New(
-		&config.MSTeamsConfig{
+		&MSTeamsConfig{
 			WebhookURL: &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -348,7 +347,7 @@ func TestMSTeamsReadingURLFromFile(t *testing.T) {
 	require.NoError(t, err, "writing to temp file failed")
 
 	notifier, err := New(
-		&config.MSTeamsConfig{
+		&MSTeamsConfig{
 			WebhookURLFile: f.Name(),
 			HTTPConfig:     &commoncfg.HTTPClientConfig{},
 		},

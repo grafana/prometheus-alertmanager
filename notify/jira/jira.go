@@ -30,7 +30,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/trivago/tgo/tcontainer"
 
-	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/types"
@@ -43,14 +42,14 @@ const (
 
 // Notifier implements a Notifier for JIRA notifications.
 type Notifier struct {
-	conf    *config.JiraConfig
+	conf    *JiraConfig
 	tmpl    *template.Template
 	logger  log.Logger
 	client  *http.Client
 	retrier *notify.Retrier
 }
 
-func New(c *config.JiraConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(c *JiraConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	client, err := commoncfg.NewClientFromConfig(*c.HTTPConfig, "jira", httpOpts...)
 	if err != nil {
 		return nil, err

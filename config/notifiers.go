@@ -23,35 +23,18 @@ import (
 	"time"
 
 	commoncfg "github.com/prometheus/common/config"
-	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/sigv4"
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 )
 
 var (
-	// DefaultWebhookConfig defines default values for Webhook configurations.
-	DefaultWebhookConfig = WebhookConfig{
-		NotifierConfig: amcommoncfg.NotifierConfig{
-			VSendResolved: true,
-		},
-	}
-
 	// DefaultWebexConfig defines default values for Webex configurations.
 	DefaultWebexConfig = WebexConfig{
 		NotifierConfig: amcommoncfg.NotifierConfig{
 			VSendResolved: true,
 		},
 		Message: `{{ template "webex.default.message" . }}`,
-	}
-
-	// DefaultDiscordConfig defines default values for Discord configurations.
-	DefaultDiscordConfig = DiscordConfig{
-		NotifierConfig: amcommoncfg.NotifierConfig{
-			VSendResolved: true,
-		},
-		Title:   `{{ template "discord.default.title" . }}`,
-		Message: `{{ template "discord.default.message" . }}`,
 	}
 
 	// DefaultEmailConfig defines default values for Email configurations.
@@ -167,32 +150,6 @@ var (
 		Message:              `{{ template "telegram.default.message" . }}`,
 		ParseMode:            "HTML",
 	}
-
-	DefaultMSTeamsConfig = MSTeamsConfig{
-		NotifierConfig: amcommoncfg.NotifierConfig{
-			VSendResolved: true,
-		},
-		Title:   `{{ template "msteams.default.title" . }}`,
-		Summary: `{{ template "msteams.default.summary" . }}`,
-		Text:    `{{ template "msteams.default.text" . }}`,
-	}
-
-	DefaultMSTeamsV2Config = MSTeamsV2Config{
-		NotifierConfig: amcommoncfg.NotifierConfig{
-			VSendResolved: true,
-		},
-		Title: `{{ template "msteamsv2.default.title" . }}`,
-		Text:  `{{ template "msteamsv2.default.text" . }}`,
-	}
-
-	DefaultJiraConfig = JiraConfig{
-		NotifierConfig: amcommoncfg.NotifierConfig{
-			VSendResolved: true,
-		},
-		Summary:     `{{ template "jira.default.summary" . }}`,
-		Description: `{{ template "jira.default.description" . }}`,
-		Priority:    `{{ template "jira.default.priority" . }}`,
-	}
 )
 
 // WebexConfig configures notifications via Webex.
@@ -219,37 +176,6 @@ func (c *WebexConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 	if c.HTTPConfig == nil || c.HTTPConfig.Authorization == nil {
 		return errors.New("missing webex_configs.http_config.authorization")
-	}
-
-	return nil
-}
-
-// DiscordConfig configures notifications via Discord.
-type DiscordConfig struct {
-	amcommoncfg.NotifierConfig `yaml:",inline" json:",inline"`
-
-	HTTPConfig     *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
-	WebhookURL     *amcommoncfg.SecretURL      `yaml:"webhook_url,omitempty" json:"webhook_url,omitempty"`
-	WebhookURLFile string                      `yaml:"webhook_url_file,omitempty" json:"webhook_url_file,omitempty"`
-
-	Title   string `yaml:"title,omitempty" json:"title,omitempty"`
-	Message string `yaml:"message,omitempty" json:"message,omitempty"`
-}
-
-// UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *DiscordConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	*c = DefaultDiscordConfig
-	type plain DiscordConfig
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-
-	if c.WebhookURL == nil && c.WebhookURLFile == "" {
-		return errors.New("one of webhook_url or webhook_url_file must be configured")
-	}
-
-	if c.WebhookURL != nil && len(c.WebhookURLFile) > 0 {
-		return errors.New("at most one of webhook_url & webhook_url_file must be configured")
 	}
 
 	return nil
@@ -496,42 +422,6 @@ func (c *SlackConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return errors.New("at most one of api_url & api_url_file must be configured")
 	}
 
-	return nil
-}
-
-// WebhookConfig configures notifications via a generic webhook.
-type WebhookConfig struct {
-	amcommoncfg.NotifierConfig `yaml:",inline" json:",inline"`
-
-	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
-
-	// URL to send POST request to.
-	URL     *amcommoncfg.SecretURL `yaml:"url" json:"url"`
-	URLFile string                 `yaml:"url_file" json:"url_file"`
-
-	// MaxAlerts is the maximum number of alerts to be sent per webhook message.
-	// Alerts exceeding this threshold will be truncated. Setting this to 0
-	// allows an unlimited number of alerts.
-	MaxAlerts uint64 `yaml:"max_alerts" json:"max_alerts"`
-
-	// Timeout is the maximum time allowed to invoke the webhook. Setting this to 0
-	// does not impose a timeout.
-	Timeout model.Duration `yaml:"timeout" json:"timeout"`
-}
-
-// UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *WebhookConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	*c = DefaultWebhookConfig
-	type plain WebhookConfig
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-	if c.URL == nil && c.URLFile == "" {
-		return errors.New("one of url or url_file must be configured")
-	}
-	if c.URL != nil && c.URLFile != "" {
-		return errors.New("at most one of url & url_file must be configured")
-	}
 	return nil
 }
 
@@ -809,100 +699,5 @@ func (c *TelegramConfig) UnmarshalYAML(unmarshal func(interface{}) error) error 
 		c.ParseMode != "HTML" {
 		return errors.New("unknown parse_mode on telegram_config, must be Markdown, MarkdownV2, HTML or empty string")
 	}
-	return nil
-}
-
-type MSTeamsConfig struct {
-	amcommoncfg.NotifierConfig `yaml:",inline" json:",inline"`
-	HTTPConfig                 *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
-	WebhookURL                 *amcommoncfg.SecretURL      `yaml:"webhook_url,omitempty" json:"webhook_url,omitempty"`
-	WebhookURLFile             string                      `yaml:"webhook_url_file,omitempty" json:"webhook_url_file,omitempty"`
-
-	Title   string `yaml:"title,omitempty" json:"title,omitempty"`
-	Summary string `yaml:"summary,omitempty" json:"summary,omitempty"`
-	Text    string `yaml:"text,omitempty" json:"text,omitempty"`
-}
-
-func (c *MSTeamsConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	*c = DefaultMSTeamsConfig
-	type plain MSTeamsConfig
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-
-	if c.WebhookURL == nil && c.WebhookURLFile == "" {
-		return errors.New("one of webhook_url or webhook_url_file must be configured")
-	}
-
-	if c.WebhookURL != nil && len(c.WebhookURLFile) > 0 {
-		return errors.New("at most one of webhook_url & webhook_url_file must be configured")
-	}
-
-	return nil
-}
-
-type MSTeamsV2Config struct {
-	amcommoncfg.NotifierConfig `yaml:",inline" json:",inline"`
-	HTTPConfig                 *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
-	WebhookURL                 *amcommoncfg.SecretURL      `yaml:"webhook_url,omitempty" json:"webhook_url,omitempty"`
-	WebhookURLFile             string                      `yaml:"webhook_url_file,omitempty" json:"webhook_url_file,omitempty"`
-
-	Title string `yaml:"title,omitempty" json:"title,omitempty"`
-	Text  string `yaml:"text,omitempty" json:"text,omitempty"`
-}
-
-func (c *MSTeamsV2Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	*c = DefaultMSTeamsV2Config
-	type plain MSTeamsV2Config
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-
-	if c.WebhookURL == nil && c.WebhookURLFile == "" {
-		return errors.New("one of webhook_url or webhook_url_file must be configured")
-	}
-
-	if c.WebhookURL != nil && len(c.WebhookURLFile) > 0 {
-		return errors.New("at most one of webhook_url & webhook_url_file must be configured")
-	}
-
-	return nil
-}
-
-type JiraConfig struct {
-	amcommoncfg.NotifierConfig `yaml:",inline" json:",inline"`
-	HTTPConfig                 *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
-
-	APIURL *amcommoncfg.URL `yaml:"api_url,omitempty" json:"api_url,omitempty"`
-
-	Project     string   `yaml:"project,omitempty" json:"project,omitempty"`
-	Summary     string   `yaml:"summary,omitempty" json:"summary,omitempty"`
-	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
-	Labels      []string `yaml:"labels,omitempty" json:"labels,omitempty"`
-	Priority    string   `yaml:"priority,omitempty" json:"priority,omitempty"`
-	IssueType   string   `yaml:"issue_type,omitempty" json:"issue_type,omitempty"`
-
-	ReopenTransition  string         `yaml:"reopen_transition,omitempty" json:"reopen_transition,omitempty"`
-	ResolveTransition string         `yaml:"resolve_transition,omitempty" json:"resolve_transition,omitempty"`
-	WontFixResolution string         `yaml:"wont_fix_resolution,omitempty" json:"wont_fix_resolution,omitempty"`
-	ReopenDuration    model.Duration `yaml:"reopen_duration,omitempty" json:"reopen_duration,omitempty"`
-
-	Fields map[string]any `yaml:"fields,omitempty" json:"custom_fields,omitempty"`
-}
-
-func (c *JiraConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	*c = DefaultJiraConfig
-	type plain JiraConfig
-	if err := unmarshal((*plain)(c)); err != nil {
-		return err
-	}
-
-	if c.Project == "" {
-		return errors.New("missing project in jira_config")
-	}
-	if c.IssueType == "" {
-		return errors.New("missing issue_type in jira_config")
-	}
-
 	return nil
 }

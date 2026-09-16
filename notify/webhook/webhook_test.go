@@ -26,7 +26,6 @@ import (
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/stretchr/testify/require"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
@@ -38,7 +37,7 @@ func TestWebhookRetry(t *testing.T) {
 		require.NoError(t, err)
 	}
 	notifier, err := New(
-		&config.WebhookConfig{
+		&WebhookConfig{
 			URL:        &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -107,7 +106,7 @@ func TestWebhookRedactedURL(t *testing.T) {
 
 	secret := "secret"
 	notifier, err := New(
-		&config.WebhookConfig{
+		&WebhookConfig{
 			URL:        &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -129,7 +128,7 @@ func TestWebhookReadingURLFromFile(t *testing.T) {
 	require.NoError(t, err, "writing to temp file failed")
 
 	notifier, err := New(
-		&config.WebhookConfig{
+		&WebhookConfig{
 			URLFile:    f.Name(),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},

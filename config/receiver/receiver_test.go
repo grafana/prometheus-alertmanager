@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
+	"github.com/prometheus/alertmanager/notify/webhook"
 )
 
 type sendResolved bool
@@ -37,7 +38,7 @@ func TestBuildReceiverIntegrations(t *testing.T) {
 		{
 			receiver: config.Receiver{
 				Name: "foo",
-				WebhookConfigs: []*config.WebhookConfig{
+				WebhookConfigs: []*webhook.WebhookConfig{
 					{
 						HTTPConfig: &commoncfg.HTTPClientConfig{},
 					},
@@ -57,7 +58,7 @@ func TestBuildReceiverIntegrations(t *testing.T) {
 		{
 			receiver: config.Receiver{
 				Name: "foo",
-				WebhookConfigs: []*config.WebhookConfig{
+				WebhookConfigs: []*webhook.WebhookConfig{
 					{
 						HTTPConfig: &commoncfg.HTTPClientConfig{
 							TLSConfig: commoncfg.TLSConfig{

@@ -30,7 +30,6 @@ import (
 
 	"github.com/go-kit/log"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
@@ -40,7 +39,7 @@ import (
 
 func TestJiraRetry(t *testing.T) {
 	notifier, err := New(
-		&config.JiraConfig{
+		&JiraConfig{
 			APIURL: &amcommoncfg.URL{
 				URL: &url.URL{
 					Scheme: "https",
@@ -83,14 +82,14 @@ func TestJiraTemplating(t *testing.T) {
 
 	for _, tc := range []struct {
 		title string
-		cfg   *config.JiraConfig
+		cfg   *JiraConfig
 
 		retry  bool
 		errMsg string
 	}{
 		{
 			title: "full-blown message",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: `{{ template "jira.default.description" . }}`,
 			},
@@ -98,14 +97,14 @@ func TestJiraTemplating(t *testing.T) {
 		},
 		{
 			title: "summary with templating errors",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary: "{{ ",
 			},
 			errMsg: "template: :1: unclosed action",
 		},
 		{
 			title: "description with templating errors",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: "{{ ",
 			},
@@ -113,7 +112,7 @@ func TestJiraTemplating(t *testing.T) {
 		},
 		{
 			title: "priority with templating errors",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: `{{ template "jira.default.description" . }}`,
 				Priority:    "{{ ",
@@ -157,7 +156,7 @@ func TestJiraTemplating(t *testing.T) {
 func TestJiraNotify(t *testing.T) {
 	for _, tc := range []struct {
 		title string
-		cfg   *config.JiraConfig
+		cfg   *JiraConfig
 
 		alert *types.Alert
 
@@ -168,7 +167,7 @@ func TestJiraNotify(t *testing.T) {
 	}{
 		{
 			title: "create new issue",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -210,7 +209,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "create new issue with custom field and too long summary",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     strings.Repeat("A", maxSummaryLenRunes+10),
 				Description: `{{ template "jira.default.description" . }}`,
 				IssueType:   "Incident",
@@ -270,7 +269,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "reopen issue",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -325,7 +324,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "error resolve transition not found",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -379,7 +378,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "error reopen transition not found",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",

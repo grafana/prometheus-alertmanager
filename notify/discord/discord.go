@@ -27,7 +27,6 @@ import (
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
@@ -49,7 +48,7 @@ const (
 
 // Notifier implements a Notifier for Discord notifications.
 type Notifier struct {
-	conf       *config.DiscordConfig
+	conf       *DiscordConfig
 	tmpl       *template.Template
 	logger     log.Logger
 	client     *http.Client
@@ -58,7 +57,7 @@ type Notifier struct {
 }
 
 // New returns a new Discord notifier.
-func New(c *config.DiscordConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(c *DiscordConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	client, err := commoncfg.NewClientFromConfig(*c.HTTPConfig, "discord", httpOpts...)
 	if err != nil {
 		return nil, err

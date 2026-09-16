@@ -29,6 +29,11 @@ import (
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/matchers/compat"
+	"github.com/prometheus/alertmanager/notify/discord"
+	"github.com/prometheus/alertmanager/notify/jira"
+	"github.com/prometheus/alertmanager/notify/msteams"
+	"github.com/prometheus/alertmanager/notify/msteamsv2"
+	"github.com/prometheus/alertmanager/notify/webhook"
 	"github.com/prometheus/alertmanager/timeinterval"
 )
 
@@ -742,21 +747,21 @@ type Receiver struct {
 	// A unique identifier for this receiver.
 	Name string `yaml:"name" json:"name"`
 
-	DiscordConfigs   []*DiscordConfig   `yaml:"discord_configs,omitempty" json:"discord_configs,omitempty"`
-	EmailConfigs     []*EmailConfig     `yaml:"email_configs,omitempty" json:"email_configs,omitempty"`
-	PagerdutyConfigs []*PagerdutyConfig `yaml:"pagerduty_configs,omitempty" json:"pagerduty_configs,omitempty"`
-	SlackConfigs     []*SlackConfig     `yaml:"slack_configs,omitempty" json:"slack_configs,omitempty"`
-	WebhookConfigs   []*WebhookConfig   `yaml:"webhook_configs,omitempty" json:"webhook_configs,omitempty"`
-	OpsGenieConfigs  []*OpsGenieConfig  `yaml:"opsgenie_configs,omitempty" json:"opsgenie_configs,omitempty"`
-	WechatConfigs    []*WechatConfig    `yaml:"wechat_configs,omitempty" json:"wechat_configs,omitempty"`
-	PushoverConfigs  []*PushoverConfig  `yaml:"pushover_configs,omitempty" json:"pushover_configs,omitempty"`
-	VictorOpsConfigs []*VictorOpsConfig `yaml:"victorops_configs,omitempty" json:"victorops_configs,omitempty"`
-	SNSConfigs       []*SNSConfig       `yaml:"sns_configs,omitempty" json:"sns_configs,omitempty"`
-	TelegramConfigs  []*TelegramConfig  `yaml:"telegram_configs,omitempty" json:"telegram_configs,omitempty"`
-	WebexConfigs     []*WebexConfig     `yaml:"webex_configs,omitempty" json:"webex_configs,omitempty"`
-	MSTeamsConfigs   []*MSTeamsConfig   `yaml:"msteams_configs,omitempty" json:"msteams_configs,omitempty"`
-	MSTeamsV2Configs []*MSTeamsV2Config `yaml:"msteamsv2_configs,omitempty" json:"msteamsv2_configs,omitempty"`
-	JiraConfigs      []*JiraConfig      `yaml:"jira_configs,omitempty" json:"jira_configs,omitempty"`
+	DiscordConfigs   []*discord.DiscordConfig     `yaml:"discord_configs,omitempty" json:"discord_configs,omitempty"`
+	EmailConfigs     []*EmailConfig               `yaml:"email_configs,omitempty" json:"email_configs,omitempty"`
+	PagerdutyConfigs []*PagerdutyConfig           `yaml:"pagerduty_configs,omitempty" json:"pagerduty_configs,omitempty"`
+	SlackConfigs     []*SlackConfig               `yaml:"slack_configs,omitempty" json:"slack_configs,omitempty"`
+	WebhookConfigs   []*webhook.WebhookConfig     `yaml:"webhook_configs,omitempty" json:"webhook_configs,omitempty"`
+	OpsGenieConfigs  []*OpsGenieConfig            `yaml:"opsgenie_configs,omitempty" json:"opsgenie_configs,omitempty"`
+	WechatConfigs    []*WechatConfig              `yaml:"wechat_configs,omitempty" json:"wechat_configs,omitempty"`
+	PushoverConfigs  []*PushoverConfig            `yaml:"pushover_configs,omitempty" json:"pushover_configs,omitempty"`
+	VictorOpsConfigs []*VictorOpsConfig           `yaml:"victorops_configs,omitempty" json:"victorops_configs,omitempty"`
+	SNSConfigs       []*SNSConfig                 `yaml:"sns_configs,omitempty" json:"sns_configs,omitempty"`
+	TelegramConfigs  []*TelegramConfig            `yaml:"telegram_configs,omitempty" json:"telegram_configs,omitempty"`
+	WebexConfigs     []*WebexConfig               `yaml:"webex_configs,omitempty" json:"webex_configs,omitempty"`
+	MSTeamsConfigs   []*msteams.MSTeamsConfig     `yaml:"msteams_configs,omitempty" json:"msteams_configs,omitempty"`
+	MSTeamsV2Configs []*msteamsv2.MSTeamsV2Config `yaml:"msteamsv2_configs,omitempty" json:"msteamsv2_configs,omitempty"`
+	JiraConfigs      []*jira.JiraConfig           `yaml:"jira_configs,omitempty" json:"jira_configs,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface for Receiver.

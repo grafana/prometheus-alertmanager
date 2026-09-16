@@ -29,7 +29,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
@@ -41,7 +40,7 @@ var testWebhookURL, _ = url.Parse("https://discord.com/api/webhooks/971139602272
 
 func TestDiscordRetry(t *testing.T) {
 	notifier, err := New(
-		&config.DiscordConfig{
+		&DiscordConfig{
 			WebhookURL: &amcommoncfg.SecretURL{URL: testWebhookURL},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -70,14 +69,14 @@ func TestDiscordTemplating(t *testing.T) {
 
 	for _, tc := range []struct {
 		title string
-		cfg   *config.DiscordConfig
+		cfg   *DiscordConfig
 
 		retry  bool
 		errMsg string
 	}{
 		{
 			title: "full-blown message",
-			cfg: &config.DiscordConfig{
+			cfg: &DiscordConfig{
 				Title:   `{{ template "discord.default.title" . }}`,
 				Message: `{{ template "discord.default.message" . }}`,
 			},
@@ -85,14 +84,14 @@ func TestDiscordTemplating(t *testing.T) {
 		},
 		{
 			title: "title with templating errors",
-			cfg: &config.DiscordConfig{
+			cfg: &DiscordConfig{
 				Title: "{{ ",
 			},
 			errMsg: "template: :1: unclosed action",
 		},
 		{
 			title: "message with templating errors",
-			cfg: &config.DiscordConfig{
+			cfg: &DiscordConfig{
 				Title:   `{{ template "discord.default.title" . }}`,
 				Message: "{{ ",
 			},
@@ -136,7 +135,7 @@ func TestDiscordRedactedURL(t *testing.T) {
 
 	secret := "secret"
 	notifier, err := New(
-		&config.DiscordConfig{
+		&DiscordConfig{
 			WebhookURL: &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -158,7 +157,7 @@ func TestDiscordReadingURLFromFile(t *testing.T) {
 	require.NoError(t, err, "writing to temp file failed")
 
 	notifier, err := New(
-		&config.DiscordConfig{
+		&DiscordConfig{
 			WebhookURLFile: f.Name(),
 			HTTPConfig:     &commoncfg.HTTPClientConfig{},
 		},
@@ -195,7 +194,7 @@ func TestDiscord_Notify(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a DiscordConfig with the WebhookURLFile set
-	cfg := &config.DiscordConfig{
+	cfg := &DiscordConfig{
 		WebhookURLFile: tempFile.Name(),
 		HTTPConfig:     &commoncfg.HTTPClientConfig{},
 		Title:          "Test Title",
