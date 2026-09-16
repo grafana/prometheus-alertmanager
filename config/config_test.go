@@ -15,22 +15,18 @@ package config
 
 import (
 	"encoding/json"
-	"net/url"
 	"os"
 	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 
-	"github.com/prometheus/alertmanager/featurecontrol"
-	"github.com/prometheus/alertmanager/matchers/compat"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 )
 
 func TestLoadEmptyString(t *testing.T) {
@@ -552,244 +548,6 @@ func TestJSONMarshalSecret(t *testing.T) {
 	require.JSONEq(t, `{"S":"<secret>"}`, string(c), "Secret not properly elided.")
 }
 
-func TestJSONMarshalHideSecretURL(t *testing.T) {
-	urlp, err := url.Parse("http://example.com/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	u := &SecretURL{urlp}
-
-	c, err := json.Marshal(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// u003c -> "<"
-	// u003e -> ">"
-	require.Equal(t, "\"\\u003csecret\\u003e\"", string(c), "SecretURL not properly elided in JSON.")
-	// Check that the marshaled data can be unmarshaled again.
-	out := &SecretURL{}
-	err = json.Unmarshal(c, out)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	c, err = yaml.Marshal(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.Equal(t, "<secret>\n", string(c), "SecretURL not properly elided in YAML.")
-	// Check that the marshaled data can be unmarshaled again.
-	out = &SecretURL{}
-	err = yaml.Unmarshal(c, &out)
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestUnmarshalSecretURL(t *testing.T) {
-	b := []byte(`"http://example.com/se cret"`)
-	var u SecretURL
-
-	err := json.Unmarshal(b, &u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.Equal(t, "http://example.com/se%20cret", u.String(), "SecretURL not properly unmarshaled in JSON.")
-
-	err = yaml.Unmarshal(b, &u)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	require.Equal(t, "http://example.com/se%20cret", u.String(), "SecretURL not properly unmarshaled in YAML.")
-}
-
-func TestMarshalURL(t *testing.T) {
-	for name, tc := range map[string]struct {
-		input        *URL
-		expectedJSON string
-		expectedYAML string
-	}{
-		"url": {
-			input:        mustParseURL("http://example.com/"),
-			expectedJSON: "\"http://example.com/\"",
-			expectedYAML: "http://example.com/\n",
-		},
-
-		"wrapped nil value": {
-			input:        &URL{},
-			expectedJSON: "null",
-			expectedYAML: "null\n",
-		},
-
-		"wrapped empty URL": {
-			input:        &URL{&url.URL{}},
-			expectedJSON: "\"\"",
-			expectedYAML: "\"\"\n",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			j, err := json.Marshal(tc.input)
-			require.NoError(t, err)
-			require.Equal(t, tc.expectedJSON, string(j), "URL not properly marshaled into JSON.")
-
-			y, err := yaml.Marshal(tc.input)
-			require.NoError(t, err)
-			require.Equal(t, tc.expectedYAML, string(y), "URL not properly marshaled into YAML.")
-		})
-	}
-}
-
-func TestUnmarshalNilURL(t *testing.T) {
-	b := []byte(`null`)
-
-	{
-		var u URL
-		err := json.Unmarshal(b, &u)
-		require.Error(t, err, "unsupported scheme \"\" for URL")
-	}
-
-	{
-		var u URL
-		err := yaml.Unmarshal(b, &u)
-		require.NoError(t, err)
-	}
-}
-
-func TestUnmarshalEmptyURL(t *testing.T) {
-	b := []byte(`""`)
-
-	{
-		var u URL
-		err := json.Unmarshal(b, &u)
-		require.Error(t, err, "unsupported scheme \"\" for URL")
-		require.Equal(t, (*url.URL)(nil), u.URL)
-	}
-
-	{
-		var u URL
-		err := yaml.Unmarshal(b, &u)
-		require.Error(t, err, "unsupported scheme \"\" for URL")
-		require.Equal(t, (*url.URL)(nil), u.URL)
-	}
-}
-
-func TestUnmarshalURL(t *testing.T) {
-	b := []byte(`"http://example.com/a b"`)
-	var u URL
-
-	err := json.Unmarshal(b, &u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.Equal(t, "http://example.com/a%20b", u.String(), "URL not properly unmarshaled in JSON.")
-
-	err = yaml.Unmarshal(b, &u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	require.Equal(t, "http://example.com/a%20b", u.String(), "URL not properly unmarshaled in YAML.")
-}
-
-func TestUnmarshalInvalidURL(t *testing.T) {
-	for _, b := range [][]byte{
-		[]byte(`"://example.com"`),
-		[]byte(`"http:example.com"`),
-		[]byte(`"telnet://example.com"`),
-	} {
-		var u URL
-
-		err := json.Unmarshal(b, &u)
-		if err == nil {
-			t.Errorf("Expected an error unmarshaling %q from JSON", string(b))
-		}
-
-		err = yaml.Unmarshal(b, &u)
-		if err == nil {
-			t.Errorf("Expected an error unmarshaling %q from YAML", string(b))
-		}
-		t.Logf("%s", err)
-	}
-}
-
-func TestUnmarshalRelativeURL(t *testing.T) {
-	b := []byte(`"/home"`)
-	var u URL
-
-	err := json.Unmarshal(b, &u)
-	if err == nil {
-		t.Errorf("Expected an error parsing URL")
-	}
-
-	err = yaml.Unmarshal(b, &u)
-	if err == nil {
-		t.Errorf("Expected an error parsing URL")
-	}
-}
-
-func TestMarshalRegexpWithNilValue(t *testing.T) {
-	r := &Regexp{}
-
-	out, err := json.Marshal(r)
-	require.NoError(t, err)
-	require.Equal(t, "null", string(out))
-
-	out, err = yaml.Marshal(r)
-	require.NoError(t, err)
-	require.Equal(t, "null\n", string(out))
-}
-
-func TestUnmarshalEmptyRegexp(t *testing.T) {
-	b := []byte(`""`)
-
-	{
-		var re Regexp
-		err := json.Unmarshal(b, &re)
-		require.NoError(t, err)
-		require.Equal(t, regexp.MustCompile("^(?:)$"), re.Regexp)
-		require.Empty(t, re.original)
-	}
-
-	{
-		var re Regexp
-		err := yaml.Unmarshal(b, &re)
-		require.NoError(t, err)
-		require.Equal(t, regexp.MustCompile("^(?:)$"), re.Regexp)
-		require.Empty(t, re.original)
-	}
-}
-
-func TestUnmarshalNullRegexp(t *testing.T) {
-	input := []byte(`null`)
-
-	{
-		var re Regexp
-		err := json.Unmarshal(input, &re)
-		require.NoError(t, err)
-		require.Empty(t, re.original)
-	}
-
-	{
-		var re Regexp
-		err := yaml.Unmarshal(input, &re) // Interestingly enough, unmarshalling `null` in YAML doesn't even call UnmarshalYAML.
-		require.NoError(t, err)
-		require.Nil(t, re.Regexp)
-		require.Empty(t, re.original)
-	}
-}
-
-func TestMarshalEmptyMatchers(t *testing.T) {
-	r := Matchers{}
-
-	out, err := json.Marshal(r)
-	require.NoError(t, err)
-	require.Equal(t, "[]", string(out))
-
-	out, err = yaml.Marshal(r)
-	require.NoError(t, err)
-	require.Equal(t, "[]\n", string(out))
-}
-
 func TestJSONUnmarshal(t *testing.T) {
 	c, err := LoadFile("testdata/conf.good.yml")
 	if err != nil {
@@ -845,10 +603,8 @@ receivers:
 
 func TestEmptyFieldsAndRegex(t *testing.T) {
 	boolFoo := true
-	regexpFoo := Regexp{
-		Regexp:   regexp.MustCompile("^(?:^(foo1|foo2|baz)$)$"),
-		original: "^(foo1|foo2|baz)$",
-	}
+	var regexpFoo amcommoncfg.Regexp
+	require.NoError(t, yaml.Unmarshal([]byte(`"^(foo1|foo2|baz)$"`), &regexpFoo))
 
 	expectedConf := Config{
 		Global: &GlobalConfig{
@@ -859,14 +615,14 @@ func TestEmptyFieldsAndRegex(t *testing.T) {
 			ResolveTimeout:  model.Duration(5 * time.Minute),
 			SMTPSmarthost:   HostPort{Host: "localhost", Port: "25"},
 			SMTPFrom:        "alertmanager@example.org",
-			SlackAPIURL:     (*SecretURL)(mustParseURL("http://slack.example.com/")),
+			SlackAPIURL:     (*amcommoncfg.SecretURL)(amcommoncfg.MustParseURL("http://slack.example.com/")),
 			SMTPRequireTLS:  true,
-			PagerdutyURL:    mustParseURL("https://events.pagerduty.com/v2/enqueue"),
-			OpsGenieAPIURL:  mustParseURL("https://api.opsgenie.com/"),
-			WeChatAPIURL:    mustParseURL("https://qyapi.weixin.qq.com/cgi-bin/"),
-			VictorOpsAPIURL: mustParseURL("https://alert.victorops.com/integrations/generic/20131114/alert/"),
-			TelegramAPIUrl:  mustParseURL("https://api.telegram.org"),
-			WebexAPIURL:     mustParseURL("https://webexapis.com/v1/messages"),
+			PagerdutyURL:    amcommoncfg.MustParseURL("https://events.pagerduty.com/v2/enqueue"),
+			OpsGenieAPIURL:  amcommoncfg.MustParseURL("https://api.opsgenie.com/"),
+			WeChatAPIURL:    amcommoncfg.MustParseURL("https://qyapi.weixin.qq.com/cgi-bin/"),
+			VictorOpsAPIURL: amcommoncfg.MustParseURL("https://alert.victorops.com/integrations/generic/20131114/alert/"),
+			TelegramAPIUrl:  amcommoncfg.MustParseURL("https://api.telegram.org"),
+			WebexAPIURL:     amcommoncfg.MustParseURL("https://webexapis.com/v1/messages"),
 		},
 
 		Templates: []string{
@@ -888,7 +644,7 @@ func TestEmptyFieldsAndRegex(t *testing.T) {
 			Routes: []*Route{
 				{
 					Receiver: "team-X-mails",
-					MatchRE: map[string]Regexp{
+					MatchRE: map[string]amcommoncfg.Regexp{
 						"service": regexpFoo,
 					},
 				},
@@ -1275,46 +1031,4 @@ func TestNilRegexp(t *testing.T) {
 			require.Contains(t, err.Error(), tc.errMsg)
 		})
 	}
-}
-
-func TestInhibitRuleEqual(t *testing.T) {
-	c, err := LoadFile("testdata/conf.inhibit-equal.yml")
-	require.NoError(t, err)
-
-	// The inhibition rule should have the expected equal labels.
-	require.Len(t, c.InhibitRules, 1)
-	r := c.InhibitRules[0]
-	require.Equal(t, []string{"qux", "corge"}, r.Equal)
-
-	// Should not be able to load configuration with UTF-8 in equals list.
-	_, err = LoadFile("testdata/conf.inhibit-equal-utf8.yml")
-	require.Error(t, err)
-	require.Equal(t, "invalid label name \"qux🙂\" in equal list", err.Error())
-
-	// Change the mode to UTF-8 mode.
-	ff, err := featurecontrol.NewFlags(log.NewNopLogger(), featurecontrol.FeatureUTF8StrictMode)
-	require.NoError(t, err)
-	compat.InitFromFlags(log.NewNopLogger(), ff)
-
-	// Restore the mode to classic at the end of the test.
-	ff, err = featurecontrol.NewFlags(log.NewNopLogger(), featurecontrol.FeatureClassicMode)
-	require.NoError(t, err)
-	defer compat.InitFromFlags(log.NewNopLogger(), ff)
-
-	c, err = LoadFile("testdata/conf.inhibit-equal.yml")
-	require.NoError(t, err)
-
-	// The inhibition rule should have the expected equal labels.
-	require.Len(t, c.InhibitRules, 1)
-	r = c.InhibitRules[0]
-	require.Equal(t, []string{"qux", "corge"}, r.Equal)
-
-	// Should also be able to load configuration with UTF-8 in equals list.
-	c, err = LoadFile("testdata/conf.inhibit-equal-utf8.yml")
-	require.NoError(t, err)
-
-	// The inhibition rule should have the expected equal labels.
-	require.Len(t, c.InhibitRules, 1)
-	r = c.InhibitRules[0]
-	require.Equal(t, []string{"qux🙂", "corge"}, r.Equal)
 }

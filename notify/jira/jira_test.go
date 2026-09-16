@@ -31,6 +31,7 @@ import (
 	"github.com/go-kit/log"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/template"
@@ -40,7 +41,7 @@ import (
 func TestJiraRetry(t *testing.T) {
 	notifier, err := New(
 		&config.JiraConfig{
-			APIURL: &config.URL{
+			APIURL: &amcommoncfg.URL{
 				URL: &url.URL{
 					Scheme: "https",
 					Host:   "example.atlassian.net",
@@ -123,7 +124,7 @@ func TestJiraTemplating(t *testing.T) {
 		tc := tc
 
 		t.Run(tc.title, func(t *testing.T) {
-			tc.cfg.APIURL = &config.URL{URL: u}
+			tc.cfg.APIURL = &amcommoncfg.URL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 			pd, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
 			require.NoError(t, err)
@@ -567,7 +568,7 @@ func TestJiraNotify(t *testing.T) {
 			defer srv.Close()
 			u, _ := url.Parse(srv.URL)
 
-			tc.cfg.APIURL = &config.URL{URL: u}
+			tc.cfg.APIURL = &amcommoncfg.URL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 
 			notifier, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())

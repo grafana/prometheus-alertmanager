@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
@@ -42,7 +43,7 @@ var testWebhookURL, _ = url.Parse("https://example.webhook.office.com/webhookb2/
 func TestMSTeamsRetry(t *testing.T) {
 	notifier, err := New(
 		&config.MSTeamsConfig{
-			WebhookURL: &config.SecretURL{URL: testWebhookURL},
+			WebhookURL: &amcommoncfg.SecretURL{URL: testWebhookURL},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),
@@ -110,7 +111,7 @@ func TestMSTeamsTemplating(t *testing.T) {
 		},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
-			tc.cfg.WebhookURL = &config.SecretURL{URL: u}
+			tc.cfg.WebhookURL = &amcommoncfg.SecretURL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 			pd, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
 			require.NoError(t, err)
@@ -266,7 +267,7 @@ func TestNotifier_Notify_WithReason(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			notifier, err := New(
 				&config.MSTeamsConfig{
-					WebhookURL: &config.SecretURL{URL: testWebhookURL},
+					WebhookURL: &amcommoncfg.SecretURL{URL: testWebhookURL},
 					HTTPConfig: &commoncfg.HTTPClientConfig{},
 				},
 				test.CreateTmpl(t),
@@ -326,7 +327,7 @@ func TestMSTeamsRedactedURL(t *testing.T) {
 	secret := "secret"
 	notifier, err := New(
 		&config.MSTeamsConfig{
-			WebhookURL: &config.SecretURL{URL: u},
+			WebhookURL: &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),

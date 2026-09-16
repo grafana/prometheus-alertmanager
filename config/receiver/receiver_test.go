@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 )
 
@@ -42,7 +43,7 @@ func TestBuildReceiverIntegrations(t *testing.T) {
 					},
 					{
 						HTTPConfig: &commoncfg.HTTPClientConfig{},
-						NotifierConfig: config.NotifierConfig{
+						NotifierConfig: amcommoncfg.NotifierConfig{
 							VSendResolved: true,
 						},
 					},

@@ -29,6 +29,7 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/types"
@@ -49,7 +50,7 @@ type Notifier struct {
 	logger       log.Logger
 	client       *http.Client
 	retrier      *notify.Retrier
-	webhookURL   *config.SecretURL
+	webhookURL   *amcommoncfg.SecretURL
 	postJSONFunc func(ctx context.Context, client *http.Client, url string, body io.Reader) (*http.Response, error)
 }
 

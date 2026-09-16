@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
@@ -58,7 +59,7 @@ func TestOpsGenieRedactedURL(t *testing.T) {
 	key := "key"
 	notifier, err := New(
 		&config.OpsGenieConfig{
-			APIURL:     &config.URL{URL: u},
+			APIURL:     &amcommoncfg.URL{URL: u},
 			APIKey:     config.Secret(key),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -83,7 +84,7 @@ func TestGettingOpsGegineApikeyFromFile(t *testing.T) {
 
 	notifier, err := New(
 		&config.OpsGenieConfig{
-			APIURL:     &config.URL{URL: u},
+			APIURL:     &amcommoncfg.URL{URL: u},
 			APIKeyFile: f.Name(),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -113,7 +114,7 @@ func TestOpsGenie(t *testing.T) {
 		{
 			title: "config without details",
 			cfg: &config.OpsGenieConfig{
-				NotifierConfig: config.NotifierConfig{
+				NotifierConfig: amcommoncfg.NotifierConfig{
 					VSendResolved: true,
 				},
 				Message:     `{{ .CommonLabels.Message }}`,
@@ -135,7 +136,7 @@ func TestOpsGenie(t *testing.T) {
 				Entity:     `{{ .CommonLabels.Entity }}`,
 				Actions:    `{{ .CommonLabels.Actions }}`,
 				APIKey:     `{{ .ExternalURL }}`,
-				APIURL:     &config.URL{URL: u},
+				APIURL:     &amcommoncfg.URL{URL: u},
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
 			},
 			expectedEmptyAlertBody: `{"alias":"6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b","message":"","details":{},"source":""}
@@ -146,7 +147,7 @@ func TestOpsGenie(t *testing.T) {
 		{
 			title: "config with details",
 			cfg: &config.OpsGenieConfig{
-				NotifierConfig: config.NotifierConfig{
+				NotifierConfig: amcommoncfg.NotifierConfig{
 					VSendResolved: true,
 				},
 				Message:     `{{ .CommonLabels.Message }}`,
@@ -171,7 +172,7 @@ func TestOpsGenie(t *testing.T) {
 				Entity:     `{{ .CommonLabels.Entity }}`,
 				Actions:    `{{ .CommonLabels.Actions }}`,
 				APIKey:     `{{ .ExternalURL }}`,
-				APIURL:     &config.URL{URL: u},
+				APIURL:     &amcommoncfg.URL{URL: u},
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
 			},
 			expectedEmptyAlertBody: `{"alias":"6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b","message":"","details":{"Description":"adjusted "},"source":""}
@@ -182,7 +183,7 @@ func TestOpsGenie(t *testing.T) {
 		{
 			title: "config with multiple teams",
 			cfg: &config.OpsGenieConfig{
-				NotifierConfig: config.NotifierConfig{
+				NotifierConfig: amcommoncfg.NotifierConfig{
 					VSendResolved: true,
 				},
 				Message:     `{{ .CommonLabels.Message }}`,
@@ -201,7 +202,7 @@ func TestOpsGenie(t *testing.T) {
 				Note:       `{{ .CommonLabels.Note }}`,
 				Priority:   `{{ .CommonLabels.Priority }}`,
 				APIKey:     `{{ .ExternalURL }}`,
-				APIURL:     &config.URL{URL: u},
+				APIURL:     &amcommoncfg.URL{URL: u},
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
 			},
 			expectedEmptyAlertBody: `{"alias":"6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b","message":"","details":{"Description":"adjusted "},"source":""}
@@ -284,7 +285,7 @@ func TestOpsGenieWithUpdate(t *testing.T) {
 		Description:  `{{ .CommonLabels.Description }}`,
 		UpdateAlerts: true,
 		APIKey:       "test-api-key",
-		APIURL:       &config.URL{URL: u},
+		APIURL:       &amcommoncfg.URL{URL: u},
 		HTTPConfig:   &commoncfg.HTTPClientConfig{},
 	}
 	notifierWithUpdate, err := New(&opsGenieConfigWithUpdate, tmpl, log.NewNopLogger())

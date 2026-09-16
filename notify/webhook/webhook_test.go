@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
 )
@@ -38,7 +39,7 @@ func TestWebhookRetry(t *testing.T) {
 	}
 	notifier, err := New(
 		&config.WebhookConfig{
-			URL:        &config.SecretURL{URL: u},
+			URL:        &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),
@@ -107,7 +108,7 @@ func TestWebhookRedactedURL(t *testing.T) {
 	secret := "secret"
 	notifier, err := New(
 		&config.WebhookConfig{
-			URL:        &config.SecretURL{URL: u},
+			URL:        &amcommoncfg.SecretURL{URL: u},
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),

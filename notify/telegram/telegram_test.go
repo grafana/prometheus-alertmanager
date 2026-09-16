@@ -31,6 +31,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
@@ -61,7 +62,7 @@ receivers:
 
 func TestTelegramRetry(t *testing.T) {
 	// Fake url for testing purposes
-	fakeURL := config.URL{
+	fakeURL := amcommoncfg.URL{
 		URL: &url.URL{
 			Scheme: "https",
 			Host:   "FAKE_API",
@@ -137,7 +138,7 @@ func TestTelegramNotify(t *testing.T) {
 			defer srv.Close()
 			u, _ := url.Parse(srv.URL)
 
-			tc.cfg.APIUrl = &config.URL{URL: u}
+			tc.cfg.APIUrl = &amcommoncfg.URL{URL: u}
 
 			notifier, err := New(&tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
 			require.NoError(t, err)
