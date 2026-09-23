@@ -163,14 +163,20 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 		logger.Warn("Truncated description", "max_runes", maxDescriptionLenRunes)
 	}
 
-	requestBody.Fields.Description = issueDescriptionString
-	if strings.HasSuffix(n.conf.APIURL.Path, "/3") {
-		var issueDescription any
-		if err := json.Unmarshal([]byte(issueDescriptionString), &issueDescription); err != nil {
-			return issue{}, fmt.Errorf("description unmarshaling: %w", err)
+	var description any
+	descriptionCopy := issueDescriptionString
+	if isAPIv3Path(n.conf.APIURL.Path) {
+		descriptionCopy = strings.TrimSpace(descriptionCopy)
+		if descriptionCopy != "" {
+			if !json.Valid([]byte(descriptionCopy)) {
+				return issue{}, fmt.Errorf("description template: invalid JSON for API v3")
+			}
+			description = append(json.RawMessage(nil), []byte(descriptionCopy)...)
 		}
-		requestBody.Fields.Description = issueDescription
+	} else {
+		description = descriptionCopy
 	}
+	requestBody.Fields.Description = description
 
 	for i, label := range n.conf.Labels {
 		label, err = tmplTextFunc(label)
@@ -380,4 +386,8 @@ func (n *Notifier) doAPIRequestFullPath(ctx context.Context, method, path string
 	}
 
 	return responseBody, false, nil
+}
+
+func isAPIv3Path(path string) bool {
+	return strings.HasSuffix(strings.TrimRight(path, "/"), "/3")
 }
