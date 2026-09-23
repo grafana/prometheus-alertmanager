@@ -894,6 +894,18 @@ func TestJiraDescriptionEncoding(t *testing.T) {
 			wantDescription: `{"z":1,"a":2}`,
 		},
 		{
+			title:           "v2 empty description is omitted, not an empty string",
+			apiPath:         "/rest/api/2",
+			descriptionTmpl: "",
+			wantOmitted:     true,
+		},
+		{
+			title:           "v2 whitespace-only description is kept as a plain string, unlike v3",
+			apiPath:         "/rest/api/2",
+			descriptionTmpl: "   ",
+			wantDescription: "   ",
+		},
+		{
 			title:           "v3 path (no trailing slash) treats the content as JSON",
 			apiPath:         "/rest/api/3",
 			descriptionTmpl: `{"z":1,"a":2}`,
@@ -944,7 +956,7 @@ func TestJiraDescriptionEncoding(t *testing.T) {
 				},
 			}
 
-			requestBody, err := n.prepareIssueRequestBody(context.Background(), log.NewNopLogger(), "groupid", identityTmplTextFunc)
+			requestBody, err := n.prepareIssueRequestBody(context.Background(), promslog.NewNopLogger(), "groupid", identityTmplTextFunc)
 			if tc.wantErrSubstring != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.wantErrSubstring)
@@ -1018,6 +1030,12 @@ func TestJiraPrepareSearchRequest(t *testing.T) {
 			apiType:  "",
 			apiURL:   "https://jira.example.com/rest/api/2",
 			wantPath: "https://jira.example.com/rest/api/2/search",
+		},
+		{
+			title:    "unset APIType on an atlassian.net host still falls back to v2 /search, unlike auto",
+			apiType:  "",
+			apiURL:   "https://example.atlassian.net/rest/api/2",
+			wantPath: "https://example.atlassian.net/rest/api/2/search",
 		},
 		{
 			title:    "rewrite only touches the first /rest/api/2/ occurrence in the search path",
