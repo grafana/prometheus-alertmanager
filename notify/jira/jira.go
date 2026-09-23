@@ -102,12 +102,21 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		path = "issue/" + existingIssue.Key
 		method = http.MethodPut
 
-		logger.Debug("updating existing issue", "issue_key", existingIssue.Key)
+		logger.Debug("updating existing issue", "issue_key", existingIssue.Key, "summary_update_enabled", n.conf.Summary.EnableUpdateValue(), "description_update_enabled", n.conf.Description.EnableUpdateValue())
 	}
 
 	requestBody, err := n.prepareIssueRequestBody(ctx, logger, key.Hash(), tmplTextFunc)
 	if err != nil {
 		return false, err
+	}
+
+	if method == http.MethodPut && requestBody.Fields != nil {
+		if !n.conf.Description.EnableUpdateValue() {
+			requestBody.Fields.Description = nil
+		}
+		if !n.conf.Summary.EnableUpdateValue() {
+			requestBody.Fields.Summary = nil
+		}
 	}
 
 	_, shouldRetry, err = n.doAPIRequest(ctx, method, path, requestBody)
@@ -119,7 +128,7 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 }
 
 func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Logger, groupID string, tmplTextFunc templateFunc) (issue, error) {
-	summary, err := tmplTextFunc(n.conf.Summary)
+	summary, err := tmplTextFunc(n.conf.Summary.Template)
 	if err != nil {
 		return issue{}, fmt.Errorf("summary template: %w", err)
 	}
@@ -139,12 +148,12 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 	requestBody := issue{Fields: &issueFields{
 		Project:   &issueProject{Key: n.conf.Project},
 		Issuetype: &idNameValue{Name: n.conf.IssueType},
-		Summary:   summary,
+		Summary:   &summary,
 		Labels:    make([]string, 0, len(n.conf.Labels)+1),
 		Fields:    fieldsWithStringKeys,
 	}}
 
-	issueDescriptionString, err := tmplTextFunc(n.conf.Description)
+	issueDescriptionString, err := tmplTextFunc(n.conf.Description.Template)
 	if err != nil {
 		return issue{}, fmt.Errorf("description template: %w", err)
 	}
