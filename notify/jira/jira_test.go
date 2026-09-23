@@ -874,6 +874,106 @@ func TestJiraPriority(t *testing.T) {
 	}
 }
 
+func TestJiraDescriptionEncoding(t *testing.T) {
+	identityTmplTextFunc := func(s string) (string, error) { return s, nil }
+
+	for _, tc := range []struct {
+		title string
+
+		apiPath         string
+		descriptionTmpl string
+
+		wantErrSubstring string
+		wantOmitted      bool
+		wantDescription  any // checked only when neither wantErrSubstring nor wantOmitted is set
+	}{
+		{
+			title:           "v2 path keeps the description as a plain string",
+			apiPath:         "/rest/api/2",
+			descriptionTmpl: `{"z":1,"a":2}`,
+			wantDescription: `{"z":1,"a":2}`,
+		},
+		{
+			title:           "v3 path (no trailing slash) treats the content as JSON",
+			apiPath:         "/rest/api/3",
+			descriptionTmpl: `{"z":1,"a":2}`,
+			wantDescription: map[string]any{"z": float64(1), "a": float64(2)},
+		},
+		{
+			title:           "v3 path WITH a trailing slash is still detected as v3",
+			apiPath:         "/rest/api/3/",
+			descriptionTmpl: `{"z":1,"a":2}`,
+			wantDescription: map[string]any{"z": float64(1), "a": float64(2)},
+		},
+		{
+			title:           "v3 empty description is omitted, not an error",
+			apiPath:         "/rest/api/3",
+			descriptionTmpl: "",
+			wantOmitted:     true,
+		},
+		{
+			title:           "v3 whitespace-only description is omitted, not an error",
+			apiPath:         "/rest/api/3",
+			descriptionTmpl: "   \n\t  ",
+			wantOmitted:     true,
+		},
+		{
+			title:           "v3 explicit JSON null is present in the request, distinct from omission",
+			apiPath:         "/rest/api/3",
+			descriptionTmpl: "null",
+			wantDescription: nil,
+		},
+		{
+			title:            "v3 invalid JSON errors with upstream's message",
+			apiPath:          "/rest/api/3",
+			descriptionTmpl:  "not json",
+			wantErrSubstring: "description template: invalid JSON for API v3",
+		},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			u, err := url.Parse("https://jira.example.com" + tc.apiPath)
+			require.NoError(t, err)
+
+			n := &Notifier{
+				conf: &JiraConfig{
+					Project:     "OPS",
+					IssueType:   "Incident",
+					Summary:     JiraFieldConfig{Template: "summary"},
+					Description: JiraFieldConfig{Template: tc.descriptionTmpl},
+					APIURL:      &amcommoncfg.URL{URL: u},
+				},
+			}
+
+			requestBody, err := n.prepareIssueRequestBody(context.Background(), log.NewNopLogger(), "groupid", identityTmplTextFunc)
+			if tc.wantErrSubstring != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErrSubstring)
+				return
+			}
+			require.NoError(t, err)
+
+			// Assert through the complete serialization path (marshal, then decode
+			// back into a generic map) rather than comparing raw bytes/strings:
+			// encoding/json does not guarantee literal byte preservation.
+			raw, err := json.Marshal(requestBody)
+			require.NoError(t, err)
+
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(raw, &decoded))
+			fields, ok := decoded["fields"].(map[string]any)
+			require.True(t, ok)
+
+			description, present := fields["description"]
+			if tc.wantOmitted {
+				require.False(t, present, "description should be omitted from the request")
+				return
+			}
+			require.True(t, present, "description should be present in the request")
+			require.Equal(t, tc.wantDescription, description)
+		})
+	}
+}
+
 func TestJiraPrepareSearchRequest(t *testing.T) {
 	for _, tc := range []struct {
 		title string
