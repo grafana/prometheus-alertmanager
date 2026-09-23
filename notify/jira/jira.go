@@ -173,7 +173,7 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 			}
 			description = append(json.RawMessage(nil), []byte(descriptionCopy)...)
 		}
-	} else {
+	} else if descriptionCopy != "" {
 		description = descriptionCopy
 	}
 	requestBody.Fields.Description = description
