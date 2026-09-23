@@ -31,7 +31,6 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
@@ -40,7 +39,7 @@ import (
 
 func TestPagerDutyRetryV1(t *testing.T) {
 	notifier, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			ServiceKey: commoncfg.Secret("01234567890123456789012345678901"),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -58,7 +57,7 @@ func TestPagerDutyRetryV1(t *testing.T) {
 
 func TestPagerDutyRetryV2(t *testing.T) {
 	notifier, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			RoutingKey: commoncfg.Secret("01234567890123456789012345678901"),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -80,7 +79,7 @@ func TestPagerDutyRedactedURLV1(t *testing.T) {
 
 	key := "01234567890123456789012345678901"
 	notifier, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			ServiceKey: commoncfg.Secret(key),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -99,7 +98,7 @@ func TestPagerDutyRedactedURLV2(t *testing.T) {
 
 	key := "01234567890123456789012345678901"
 	notifier, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			URL:        &amcommoncfg.URL{URL: u},
 			RoutingKey: commoncfg.Secret(key),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
@@ -123,7 +122,7 @@ func TestPagerDutyV1ServiceKeyFromFile(t *testing.T) {
 	defer fn()
 
 	notifier, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			ServiceKeyFile: f.Name(),
 			HTTPConfig:     &commoncfg.HTTPClientConfig{},
 		},
@@ -147,7 +146,7 @@ func TestPagerDutyV2RoutingKeyFromFile(t *testing.T) {
 	defer fn()
 
 	notifier, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			URL:            &amcommoncfg.URL{URL: u},
 			RoutingKeyFile: f.Name(),
 			HTTPConfig:     &commoncfg.HTTPClientConfig{},
@@ -174,23 +173,23 @@ func TestPagerDutyTemplating(t *testing.T) {
 
 	for _, tc := range []struct {
 		title string
-		cfg   *config.PagerdutyConfig
+		cfg   *PagerdutyConfig
 
 		retry  bool
 		errMsg string
 	}{
 		{
 			title: "full-blown message",
-			cfg: &config.PagerdutyConfig{
+			cfg: &PagerdutyConfig{
 				RoutingKey: commoncfg.Secret("01234567890123456789012345678901"),
-				Images: []config.PagerdutyImage{
+				Images: []PagerdutyImage{
 					{
 						Src:  "{{ .Status }}",
 						Alt:  "{{ .Status }}",
 						Href: "{{ .Status }}",
 					},
 				},
-				Links: []config.PagerdutyLink{
+				Links: []PagerdutyLink{
 					{
 						Href: "{{ .Status }}",
 						Text: "{{ .Status }}",
@@ -206,7 +205,7 @@ func TestPagerDutyTemplating(t *testing.T) {
 		},
 		{
 			title: "details with templating errors",
-			cfg: &config.PagerdutyConfig{
+			cfg: &PagerdutyConfig{
 				RoutingKey: commoncfg.Secret("01234567890123456789012345678901"),
 				Details: map[string]string{
 					"firing":       `{{ template "pagerduty.default.instances" .Alerts.Firing`,
@@ -219,7 +218,7 @@ func TestPagerDutyTemplating(t *testing.T) {
 		},
 		{
 			title: "v2 message with templating errors",
-			cfg: &config.PagerdutyConfig{
+			cfg: &PagerdutyConfig{
 				RoutingKey: commoncfg.Secret("01234567890123456789012345678901"),
 				Severity:   "{{ ",
 			},
@@ -227,7 +226,7 @@ func TestPagerDutyTemplating(t *testing.T) {
 		},
 		{
 			title: "v1 message with templating errors",
-			cfg: &config.PagerdutyConfig{
+			cfg: &PagerdutyConfig{
 				ServiceKey: commoncfg.Secret("01234567890123456789012345678901"),
 				Client:     "{{ ",
 			},
@@ -235,14 +234,14 @@ func TestPagerDutyTemplating(t *testing.T) {
 		},
 		{
 			title: "routing key cannot be empty",
-			cfg: &config.PagerdutyConfig{
+			cfg: &PagerdutyConfig{
 				RoutingKey: commoncfg.Secret(`{{ "" }}`),
 			},
 			errMsg: "routing key cannot be empty",
 		},
 		{
 			title: "service_key cannot be empty",
-			cfg: &config.PagerdutyConfig{
+			cfg: &PagerdutyConfig{
 				ServiceKey: commoncfg.Secret(`{{ "" }}`),
 			},
 			errMsg: "service key cannot be empty",
@@ -335,7 +334,7 @@ func TestEventSizeEnforcement(t *testing.T) {
 	}
 
 	notifierV1, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			ServiceKey: commoncfg.Secret("01234567890123456789012345678901"),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -358,7 +357,7 @@ func TestEventSizeEnforcement(t *testing.T) {
 	}
 
 	notifierV2, err := New(
-		&config.PagerdutyConfig{
+		&PagerdutyConfig{
 			RoutingKey: commoncfg.Secret("01234567890123456789012345678901"),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
@@ -382,7 +381,7 @@ func TestPagerDutyEmptySrcHref(t *testing.T) {
 		Links       []pagerDutyLink
 	}
 
-	images := []config.PagerdutyImage{
+	images := []PagerdutyImage{
 		{
 			Src:  "",
 			Alt:  "Empty src",
@@ -400,7 +399,7 @@ func TestPagerDutyEmptySrcHref(t *testing.T) {
 		},
 	}
 
-	links := []config.PagerdutyLink{
+	links := []PagerdutyLink{
 		{
 			Href: "",
 			Text: "Empty href",
@@ -416,11 +415,7 @@ func TestPagerDutyEmptySrcHref(t *testing.T) {
 		if image.Src == "" {
 			continue
 		}
-		expectedImages = append(expectedImages, pagerDutyImage{
-			Src:  image.Src,
-			Alt:  image.Alt,
-			Href: image.Href,
-		})
+		expectedImages = append(expectedImages, pagerDutyImage(image))
 	}
 
 	expectedLinks := make([]pagerDutyLink, 0, len(links))
@@ -470,7 +465,7 @@ func TestPagerDutyEmptySrcHref(t *testing.T) {
 	url, err := url.Parse(server.URL)
 	require.NoError(t, err)
 
-	pagerDutyConfig := config.PagerdutyConfig{
+	pagerDutyConfig := PagerdutyConfig{
 		HTTPConfig: &commoncfg.HTTPClientConfig{},
 		RoutingKey: commoncfg.Secret("01234567890123456789012345678901"),
 		URL:        &amcommoncfg.URL{URL: url},

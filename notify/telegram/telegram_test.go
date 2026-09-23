@@ -28,37 +28,12 @@ import (
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
 
-	"github.com/prometheus/alertmanager/config"
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
 )
-
-func TestTelegramUnmarshal(t *testing.T) {
-	in := `
-route:
-  receiver: test
-receivers:
-- name: test
-  telegram_configs:
-  - chat_id: 1234
-    bot_token: secret
-`
-	var c config.Config
-	err := yaml.Unmarshal([]byte(in), &c)
-	require.NoError(t, err)
-
-	require.Len(t, c.Receivers, 1)
-	require.Len(t, c.Receivers[0].TelegramConfigs, 1)
-
-	require.Equal(t, "https://api.telegram.org", c.Receivers[0].TelegramConfigs[0].APIUrl.String())
-	require.Equal(t, commoncfg.Secret("secret"), c.Receivers[0].TelegramConfigs[0].BotToken)
-	require.Equal(t, int64(1234), c.Receivers[0].TelegramConfigs[0].ChatID)
-	require.Equal(t, "HTML", c.Receivers[0].TelegramConfigs[0].ParseMode)
-}
 
 func TestTelegramRetry(t *testing.T) {
 	// Fake url for testing purposes
@@ -69,7 +44,7 @@ func TestTelegramRetry(t *testing.T) {
 		},
 	}
 	notifier, err := New(
-		&config.TelegramConfig{
+		&TelegramConfig{
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 			APIUrl:     &fakeURL,
 		},
@@ -94,12 +69,12 @@ func TestTelegramNotify(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		cfg     config.TelegramConfig
+		cfg     TelegramConfig
 		expText string
 	}{
 		{
 			name: "No escaping by default",
-			cfg: config.TelegramConfig{
+			cfg: TelegramConfig{
 				Message:    "<code>x < y</code>",
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
 				BotToken:   commoncfg.Secret(token),
@@ -108,7 +83,7 @@ func TestTelegramNotify(t *testing.T) {
 		},
 		{
 			name: "Characters escaped in HTML mode",
-			cfg: config.TelegramConfig{
+			cfg: TelegramConfig{
 				ParseMode:  "HTML",
 				Message:    "<code>x < y</code>",
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
@@ -118,7 +93,7 @@ func TestTelegramNotify(t *testing.T) {
 		},
 		{
 			name: "Bot token from file",
-			cfg: config.TelegramConfig{
+			cfg: TelegramConfig{
 				Message:      "test",
 				HTTPConfig:   &commoncfg.HTTPClientConfig{},
 				BotTokenFile: fileWithToken.Name(),
