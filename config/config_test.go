@@ -824,10 +824,10 @@ func TestOpsGenieDefaultAPIKey(t *testing.T) {
 	}
 
 	defaultKey := conf.Global.OpsGenieAPIKey
-	if defaultKey != conf.Receivers[0].OpsGenieConfigs[0].APIKey {
+	if commoncfg.Secret(defaultKey) != conf.Receivers[0].OpsGenieConfigs[0].APIKey {
 		t.Fatalf("Invalid OpsGenie key: %s\nExpected: %s", conf.Receivers[0].OpsGenieConfigs[0].APIKey, defaultKey)
 	}
-	if defaultKey == conf.Receivers[1].OpsGenieConfigs[0].APIKey {
+	if commoncfg.Secret(defaultKey) == conf.Receivers[1].OpsGenieConfigs[0].APIKey {
 		t.Errorf("Invalid OpsGenie key: %s\nExpected: %s", conf.Receivers[0].OpsGenieConfigs[0].APIKey, "qwe456")
 	}
 }

@@ -60,7 +60,7 @@ func TestOpsGenieRedactedURL(t *testing.T) {
 	notifier, err := New(
 		&config.OpsGenieConfig{
 			APIURL:     &amcommoncfg.URL{URL: u},
-			APIKey:     config.Secret(key),
+			APIKey:     commoncfg.Secret(key),
 			HTTPConfig: &commoncfg.HTTPClientConfig{},
 		},
 		test.CreateTmpl(t),

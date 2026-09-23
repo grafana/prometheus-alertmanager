@@ -342,7 +342,7 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 				if c.Global.OpsGenieAPIKey == "" && len(c.Global.OpsGenieAPIKeyFile) == 0 {
 					return errors.New("no global OpsGenie API Key set either inline or in a file")
 				}
-				ogc.APIKey = c.Global.OpsGenieAPIKey
+				ogc.APIKey = commoncfg.Secret(c.Global.OpsGenieAPIKey)
 				ogc.APIKeyFile = c.Global.OpsGenieAPIKeyFile
 			}
 		}

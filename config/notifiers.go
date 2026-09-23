@@ -232,9 +232,9 @@ type PagerdutyConfig struct {
 
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
-	ServiceKey     Secret            `yaml:"service_key,omitempty" json:"service_key,omitempty"`
+	ServiceKey     commoncfg.Secret  `yaml:"service_key,omitempty" json:"service_key,omitempty"`
 	ServiceKeyFile string            `yaml:"service_key_file,omitempty" json:"service_key_file,omitempty"`
-	RoutingKey     Secret            `yaml:"routing_key,omitempty" json:"routing_key,omitempty"`
+	RoutingKey     commoncfg.Secret  `yaml:"routing_key,omitempty" json:"routing_key,omitempty"`
 	RoutingKeyFile string            `yaml:"routing_key_file,omitempty" json:"routing_key_file,omitempty"`
 	URL            *amcommoncfg.URL  `yaml:"url,omitempty" json:"url,omitempty"`
 	Client         string            `yaml:"client,omitempty" json:"client,omitempty"`
@@ -471,7 +471,7 @@ type OpsGenieConfig struct {
 
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
-	APIKey       Secret                    `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	APIKey       commoncfg.Secret          `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 	APIKeyFile   string                    `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
 	APIURL       *amcommoncfg.URL          `yaml:"api_url,omitempty" json:"api_url,omitempty"`
 	Message      string                    `yaml:"message,omitempty" json:"message,omitempty"`
@@ -669,7 +669,7 @@ type TelegramConfig struct {
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
 	APIUrl               *amcommoncfg.URL `yaml:"api_url" json:"api_url,omitempty"`
-	BotToken             Secret           `yaml:"bot_token,omitempty" json:"token,omitempty"`
+	BotToken             commoncfg.Secret `yaml:"bot_token,omitempty" json:"token,omitempty"`
 	BotTokenFile         string           `yaml:"bot_token_file,omitempty" json:"token_file,omitempty"`
 	ChatID               int64            `yaml:"chat_id,omitempty" json:"chat,omitempty"`
 	Message              string           `yaml:"message,omitempty" json:"message,omitempty"`
