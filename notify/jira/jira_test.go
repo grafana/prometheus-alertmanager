@@ -127,6 +127,7 @@ func TestJiraTemplating(t *testing.T) {
 
 		t.Run(tc.title, func(t *testing.T) {
 			tc.cfg.APIURL = &amcommoncfg.URL{URL: u}
+			tc.cfg.APIType = "cloud"
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 			pd, err := New(tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
 			require.NoError(t, err)
@@ -639,6 +640,7 @@ func TestJiraNotify(t *testing.T) {
 			u, _ := url.Parse(srv.URL)
 
 			tc.cfg.APIURL = &amcommoncfg.URL{URL: u}
+			tc.cfg.APIType = "cloud"
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 
 			notifier, err := New(tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
@@ -868,6 +870,78 @@ func TestJiraPriority(t *testing.T) {
 			priority, err := tmplTextFunc(`{{ template "jira.default.priority" . }}`)
 			require.NoError(t, err)
 			require.Equal(t, tc.expectedPriority, priority)
+		})
+	}
+}
+
+func TestJiraPrepareSearchRequest(t *testing.T) {
+	for _, tc := range []struct {
+		title string
+
+		apiType string
+		apiURL  string
+
+		wantPath string
+	}{
+		{
+			title:    "datacenter always uses v2 /search, even on an atlassian.net host",
+			apiType:  "datacenter",
+			apiURL:   "https://example.atlassian.net/rest/api/2",
+			wantPath: "https://example.atlassian.net/rest/api/2/search",
+		},
+		{
+			title:    "cloud uses v3 /search/jql and rewrites /rest/api/2/ to /rest/api/3/",
+			apiType:  "cloud",
+			apiURL:   "https://example.atlassian.net/rest/api/2",
+			wantPath: "https://example.atlassian.net/rest/api/3/search/jql",
+		},
+		{
+			title:    "cloud on a non-atlassian host still uses v3 /search/jql",
+			apiType:  "cloud",
+			apiURL:   "https://jira.example.com/rest/api/2",
+			wantPath: "https://jira.example.com/rest/api/3/search/jql",
+		},
+		{
+			title:    "auto with an atlassian.net host uses v3 /search/jql",
+			apiType:  "auto",
+			apiURL:   "https://example.atlassian.net/rest/api/2",
+			wantPath: "https://example.atlassian.net/rest/api/3/search/jql",
+		},
+		{
+			title:    "auto without an atlassian.net host falls back to v2 /search",
+			apiType:  "auto",
+			apiURL:   "https://jira.example.com/rest/api/2",
+			wantPath: "https://jira.example.com/rest/api/2/search",
+		},
+		{
+			title:    "unset APIType behaves like the non-atlassian auto fallback",
+			apiType:  "",
+			apiURL:   "https://jira.example.com/rest/api/2",
+			wantPath: "https://jira.example.com/rest/api/2/search",
+		},
+		{
+			title:    "rewrite only touches the first /rest/api/2/ occurrence in the search path",
+			apiType:  "cloud",
+			apiURL:   "https://example.atlassian.net/rest/api/2/rest/api/2",
+			wantPath: "https://example.atlassian.net/rest/api/3/rest/api/2/search/jql",
+		},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			u, err := url.Parse(tc.apiURL)
+			require.NoError(t, err)
+
+			apiURL := &amcommoncfg.URL{URL: u}
+			n := &Notifier{conf: &JiraConfig{APIType: tc.apiType, APIURL: apiURL}}
+
+			requestBody, gotPath := n.prepareSearchRequest(`project="OPS"`)
+
+			require.Equal(t, tc.wantPath, gotPath)
+			require.Equal(t, `project="OPS"`, requestBody.JQL)
+			require.Equal(t, 2, requestBody.MaxResults)
+
+			// The path rewrite must be local to the returned search path: the
+			// configured APIURL itself must never be mutated.
+			require.Equal(t, tc.apiURL, n.conf.APIURL.String())
 		})
 	}
 }
