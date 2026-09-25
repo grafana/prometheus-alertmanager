@@ -16,12 +16,11 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	commoncfg "github.com/prometheus/common/config"
 	"gopkg.in/telebot.v3"
 
@@ -37,13 +36,13 @@ const maxMessageLenRunes = 4096
 type Notifier struct {
 	conf    *TelegramConfig
 	tmpl    *template.Template
-	logger  log.Logger
+	logger  *slog.Logger
 	client  *telebot.Bot
 	retrier *notify.Retrier
 }
 
 // New returns a new Telegram notification handler.
-func New(conf *TelegramConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(conf *TelegramConfig, t *template.Template, l *slog.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	httpclient, err := commoncfg.NewClientFromConfig(*conf.HTTPConfig, "telegram", httpOpts...)
 	if err != nil {
 		return nil, err
@@ -64,9 +63,17 @@ func New(conf *TelegramConfig, t *template.Template, l log.Logger, httpOpts ...c
 }
 
 func (n *Notifier) Notify(ctx context.Context, alert ...*types.Alert) (bool, error) {
+	key, ok := notify.GroupKey(ctx)
+	if !ok {
+		return false, fmt.Errorf("group key missing")
+	}
+
+	logger := n.logger.With("group_key", key)
+	logger.Debug("extracted group key")
+
 	var (
 		err  error
-		data = notify.GetTemplateData(ctx, n.tmpl, alert, n.logger)
+		data = notify.GetTemplateData(ctx, n.tmpl, alert, logger)
 		tmpl = notify.TmplText(n.tmpl, data, &err)
 	)
 
@@ -74,14 +81,9 @@ func (n *Notifier) Notify(ctx context.Context, alert ...*types.Alert) (bool, err
 		tmpl = notify.TmplHTML(n.tmpl, data, &err)
 	}
 
-	key, ok := notify.GroupKey(ctx)
-	if !ok {
-		return false, fmt.Errorf("group key missing")
-	}
-
 	messageText, truncated := notify.TruncateInRunes(tmpl(n.conf.Message), maxMessageLenRunes)
 	if truncated {
-		level.Warn(n.logger).Log("msg", "Truncated message", "alert", key, "max_runes", maxMessageLenRunes)
+		logger.Warn("Truncated message", "max_runes", maxMessageLenRunes)
 	}
 
 	n.client.Token, err = n.getBotToken()
@@ -96,7 +98,7 @@ func (n *Notifier) Notify(ctx context.Context, alert ...*types.Alert) (bool, err
 	if err != nil {
 		return true, err
 	}
-	level.Debug(n.logger).Log("msg", "Telegram message successfully published", "message_id", message.ID, "chat_id", message.Chat.ID)
+	logger.Debug("Telegram message successfully published", "message_id", message.ID, "chat_id", message.Chat.ID)
 
 	return false, nil
 }

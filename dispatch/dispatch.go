@@ -17,12 +17,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"go.opentelemetry.io/otel"
@@ -98,7 +97,7 @@ type Dispatcher struct {
 	ctx    context.Context
 	cancel func()
 
-	logger log.Logger
+	logger *slog.Logger
 
 	timerFactory TimerFactory
 }
@@ -119,7 +118,7 @@ func NewDispatcher(
 	mk types.Marker,
 	to func(time.Duration) time.Duration,
 	lim Limits,
-	l log.Logger,
+	l *slog.Logger,
 	m *DispatcherMetrics,
 	timerFactory TimerFactory,
 ) *Dispatcher {
@@ -137,7 +136,7 @@ func NewDispatcher(
 		route:        r,
 		marker:       mk,
 		timeout:      to,
-		logger:       log.With(l, "component", "dispatcher"),
+		logger:       l.With("component", "dispatcher"),
 		metrics:      m,
 		limits:       lim,
 		timerFactory: timerFactory,
@@ -172,7 +171,7 @@ func (d *Dispatcher) run(it provider.AlertIterator) {
 			if !ok {
 				// Iterator exhausted for some reason.
 				if err := it.Err(); err != nil {
-					level.Error(d.logger).Log("msg", "Error on alert update", "err", err)
+					d.logger.Error("Error on alert update", "err", err)
 				}
 				return
 			}
@@ -197,11 +196,11 @@ func (d *Dispatcher) run(it provider.AlertIterator) {
 				// span a child of this, because it would make it long-lived
 				dispatchLink := trace.LinkFromContext(traceCtx)
 
-				level.Debug(d.logger).Log("msg", "Received alert", "alert", alert)
+				d.logger.Debug("Received alert", "alert", alert)
 
 				// Log errors but keep trying.
 				if err := it.Err(); err != nil {
-					level.Error(d.logger).Log("msg", "Error on alert update", "err", err)
+					d.logger.Error("Error on alert update", "err", err)
 
 					span.RecordError(fmt.Errorf("error on alert update: %w", err))
 					span.SetStatus(codes.Error, err.Error())
@@ -366,7 +365,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 	// If the group does not exist, create it. But check the limit first.
 	if limit := d.limits.MaxNumberOfAggregationGroups(); limit > 0 && d.aggrGroupsNum >= limit {
 		d.metrics.aggrGroupLimitReached.Inc()
-		level.Error(d.logger).Log("msg", "Too many aggregation groups, cannot create new group for alert", "groups", d.aggrGroupsNum, "limit", limit, "alert", alert.Name())
+		d.logger.Error("Too many aggregation groups, cannot create new group for alert", "groups", d.aggrGroupsNum, "limit", limit, "alert", alert.Name())
 		return
 	}
 
@@ -389,18 +388,18 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		defer span.End()
 
 		pipelineTime, _ := notify.Now(ctx)
-		l := log.With(d.logger, "pipeline_time", pipelineTime)
+		l := d.logger.With("pipeline_time", pipelineTime)
 
 		_, _, err := d.stage.Exec(ctx, l, alerts...)
 		if err != nil {
-			lvl := level.Warn(l)
+			lvl := l.Warn
 			if errors.Is(ctx.Err(), context.Canceled) {
 				// It is expected for the context to be canceled on
 				// configuration reload or shutdown. In this case, the
 				// message should only be logged at the debug level.
-				lvl = level.Debug(l)
+				lvl = l.Debug
 			}
-			lvl.Log("msg", "Notify for alerts failed", "num_alerts", len(alerts), "err", err, "aggrGroup", ag, "alerts", fmt.Sprintf("%v", alerts))
+			lvl("Notify for alerts failed", "num_alerts", len(alerts), "err", err, "aggrGroup", ag, "alerts", fmt.Sprintf("%v", alerts))
 
 			span.RecordError(fmt.Errorf("notify for alerts failed: %w", err))
 			span.SetStatus(codes.Error, err.Error())
@@ -426,7 +425,7 @@ func getGroupLabels(alert *types.Alert, route *Route) model.LabelSet {
 type aggrGroup struct {
 	labels   model.LabelSet
 	opts     *RouteOpts
-	logger   log.Logger
+	logger   *slog.Logger
 	routeKey string
 	marker   types.Marker
 
@@ -442,7 +441,7 @@ type aggrGroup struct {
 }
 
 // newAggrGroup returns a new aggregation group.
-func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger log.Logger, timerFactory TimerFactory, marker types.Marker) *aggrGroup {
+func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger *slog.Logger, timerFactory TimerFactory, marker types.Marker) *aggrGroup {
 	if to == nil {
 		to = func(d time.Duration) time.Duration { return d }
 	}
@@ -457,7 +456,7 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 	}
 	ag.ctx, ag.cancel = context.WithCancel(ctx)
 
-	ag.logger = log.With(logger, "aggrGroup", ag, "group_fingerprint", ag.fingerprint())
+	ag.logger = logger.With("aggrGroup", ag, "group_fingerprint", ag.fingerprint())
 
 	// Set an initial one-time wait before flushing
 	// the first batch of notifications.
@@ -540,7 +539,7 @@ func (ag *aggrGroup) stop() {
 // insert inserts the alert into the aggregation group.
 func (ag *aggrGroup) insert(alert *types.Alert) {
 	if err := ag.alerts.Set(alert); err != nil {
-		level.Error(ag.logger).Log("msg", "error on set alert", "err", err)
+		ag.logger.Error("error on set alert", "err", err)
 	}
 
 	// Immediately trigger a flush if the wait duration for this
@@ -581,9 +580,9 @@ func (ag *aggrGroup) flush(ctx context.Context, nf notifyFunc) {
 	sort.Stable(alertsSlice)
 
 	pipelineTime, _ := notify.Now(ctx)
-	l := log.With(ag.logger, "pipeline_time", pipelineTime)
+	l := ag.logger.With("pipeline_time", pipelineTime)
 
-	level.Debug(l).Log("msg", "flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
+	l.Debug("flushing", "alerts", fmt.Sprintf("%v", alertsSlice))
 
 	var deleted []model.Fingerprint
 	if nf(ctx, alertsSlice...) {

@@ -16,7 +16,7 @@ package common
 import (
 	"testing"
 
-	"github.com/go-kit/log"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 
@@ -62,14 +62,14 @@ func TestInhibitRuleEqual(t *testing.T) {
 	require.Equal(t, "invalid label name \"qux🙂\" in equal list", err.Error())
 
 	// Change the mode to UTF-8 mode.
-	ff, err := featurecontrol.NewFlags(log.NewNopLogger(), featurecontrol.FeatureUTF8StrictMode)
+	ff, err := featurecontrol.NewFlags(promslog.NewNopLogger(), featurecontrol.FeatureUTF8StrictMode)
 	require.NoError(t, err)
-	compat.InitFromFlags(log.NewNopLogger(), ff)
+	compat.InitFromFlags(promslog.NewNopLogger(), ff)
 
 	// Restore the mode to classic at the end of the test.
-	ff, err = featurecontrol.NewFlags(log.NewNopLogger(), featurecontrol.FeatureClassicMode)
+	ff, err = featurecontrol.NewFlags(promslog.NewNopLogger(), featurecontrol.FeatureClassicMode)
 	require.NoError(t, err)
-	defer compat.InitFromFlags(log.NewNopLogger(), ff)
+	defer compat.InitFromFlags(promslog.NewNopLogger(), ff)
 
 	r = mustUnmarshalInhibitRule(t, inhibitRuleEqualYAML)
 
