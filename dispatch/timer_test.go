@@ -42,7 +42,9 @@ func TestSyncTimer(t *testing.T) {
 	now := time.Now()
 
 	buf := &logBuf{t: t, b: []string{}}
-	logger := slog.New(slog.NewJSONHandler(buf, nil))
+	// go-kit's log.NewJSONLogger had no level filter, so every level was
+	// captured; match that here, since the test asserts on Debug lines too.
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	marker := types.NewMarker(prometheus.NewRegistry())
 	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
 	if err != nil {

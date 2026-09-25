@@ -899,13 +899,12 @@ func (r RetryStage) exec(ctx context.Context, l *slog.Logger, alerts ...*types.A
 					iErr = err
 				}
 			} else {
-				logger := l
-				logFn := logger.Info
+				logger := l.With("attempts", i, "duration", duration, "numAlerts", len(sent))
 				if i <= 1 {
-					logger = logger.With("alerts", fmt.Sprintf("%v", alerts))
-					logFn = logger.Debug
+					logger.Debug("Notify success", "alerts", fmt.Sprintf("%v", alerts))
+				} else {
+					logger.Info("Notify success")
 				}
-				logFn("Notify success", "attempts", i, "duration", duration)
 
 				return ctx, alerts, nil
 			}

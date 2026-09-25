@@ -111,7 +111,7 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		if err != nil {
 			return false, err
 		}
-		n.logger.Warn("Truncated title", "key", key, "max_runes", maxTitleLenRunes)
+		n.logger.With("group_key", key).Warn("Truncated title", "max_runes", maxTitleLenRunes)
 	}
 	att := &attachment{
 		Title:      title,

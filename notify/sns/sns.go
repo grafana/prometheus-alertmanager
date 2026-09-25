@@ -93,7 +93,7 @@ func (n *Notifier) Notify(ctx context.Context, alert ...*types.Alert) (bool, err
 		return true, err
 	}
 
-	n.logger.Debug("SNS message successfully published", "message_id", publishOutput.MessageId, "sequence number", publishOutput.SequenceNumber)
+	n.logger.Debug("SNS message successfully published", "message_id", publishOutput.MessageId, "sequence_number", publishOutput.SequenceNumber)
 
 	return false, nil
 }
