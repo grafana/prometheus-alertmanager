@@ -28,7 +28,7 @@ import (
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 
-	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/types"
@@ -44,17 +44,17 @@ const (
 )
 
 type Notifier struct {
-	conf         *config.MSTeamsConfig
+	conf         *MSTeamsConfig
 	tmpl         *template.Template
 	logger       log.Logger
 	client       *http.Client
 	retrier      *notify.Retrier
-	webhookURL   *config.SecretURL
+	webhookURL   *amcommoncfg.SecretURL
 	postJSONFunc func(ctx context.Context, client *http.Client, url string, body io.Reader) (*http.Response, error)
 }
 
 // New returns a new notifier that uses the Microsoft Teams Webhook API.
-func New(c *config.MSTeamsConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(c *MSTeamsConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	client, err := commoncfg.NewClientFromConfig(*c.HTTPConfig, "msteams", httpOpts...)
 	if err != nil {
 		return nil, err

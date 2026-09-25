@@ -30,7 +30,7 @@ import (
 
 	"github.com/go-kit/log"
 
-	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/template"
@@ -39,8 +39,8 @@ import (
 
 func TestJiraRetry(t *testing.T) {
 	notifier, err := New(
-		&config.JiraConfig{
-			APIURL: &config.URL{
+		&JiraConfig{
+			APIURL: &amcommoncfg.URL{
 				URL: &url.URL{
 					Scheme: "https",
 					Host:   "example.atlassian.net",
@@ -82,14 +82,14 @@ func TestJiraTemplating(t *testing.T) {
 
 	for _, tc := range []struct {
 		title string
-		cfg   *config.JiraConfig
+		cfg   *JiraConfig
 
 		retry  bool
 		errMsg string
 	}{
 		{
 			title: "full-blown message",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: `{{ template "jira.default.description" . }}`,
 			},
@@ -97,14 +97,14 @@ func TestJiraTemplating(t *testing.T) {
 		},
 		{
 			title: "summary with templating errors",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary: "{{ ",
 			},
 			errMsg: "template: :1: unclosed action",
 		},
 		{
 			title: "description with templating errors",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: "{{ ",
 			},
@@ -112,7 +112,7 @@ func TestJiraTemplating(t *testing.T) {
 		},
 		{
 			title: "priority with templating errors",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     `{{ template "jira.default.summary" . }}`,
 				Description: `{{ template "jira.default.description" . }}`,
 				Priority:    "{{ ",
@@ -123,7 +123,7 @@ func TestJiraTemplating(t *testing.T) {
 		tc := tc
 
 		t.Run(tc.title, func(t *testing.T) {
-			tc.cfg.APIURL = &config.URL{URL: u}
+			tc.cfg.APIURL = &amcommoncfg.URL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 			pd, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
 			require.NoError(t, err)
@@ -156,7 +156,7 @@ func TestJiraTemplating(t *testing.T) {
 func TestJiraNotify(t *testing.T) {
 	for _, tc := range []struct {
 		title string
-		cfg   *config.JiraConfig
+		cfg   *JiraConfig
 
 		alert *types.Alert
 
@@ -167,7 +167,7 @@ func TestJiraNotify(t *testing.T) {
 	}{
 		{
 			title: "create new issue",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -209,7 +209,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "create new issue with custom field and too long summary",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:     strings.Repeat("A", maxSummaryLenRunes+10),
 				Description: `{{ template "jira.default.description" . }}`,
 				IssueType:   "Incident",
@@ -269,7 +269,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "reopen issue",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -324,7 +324,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "error resolve transition not found",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -378,7 +378,7 @@ func TestJiraNotify(t *testing.T) {
 		},
 		{
 			title: "error reopen transition not found",
-			cfg: &config.JiraConfig{
+			cfg: &JiraConfig{
 				Summary:           `{{ template "jira.default.summary" . }}`,
 				Description:       `{{ template "jira.default.description" . }}`,
 				IssueType:         "Incident",
@@ -567,7 +567,7 @@ func TestJiraNotify(t *testing.T) {
 			defer srv.Close()
 			u, _ := url.Parse(srv.URL)
 
-			tc.cfg.APIURL = &config.URL{URL: u}
+			tc.cfg.APIURL = &amcommoncfg.URL{URL: u}
 			tc.cfg.HTTPConfig = &commoncfg.HTTPClientConfig{}
 
 			notifier, err := New(tc.cfg, test.CreateTmpl(t), log.NewNopLogger())

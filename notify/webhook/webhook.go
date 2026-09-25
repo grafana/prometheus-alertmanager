@@ -30,7 +30,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/tracing"
@@ -41,7 +40,7 @@ var tracer = otel.Tracer("github.com/prometheus/alertmanager/notify/webhook")
 
 // Notifier implements a Notifier for generic webhooks.
 type Notifier struct {
-	conf    *config.WebhookConfig
+	conf    *WebhookConfig
 	tmpl    *template.Template
 	logger  log.Logger
 	client  *http.Client
@@ -49,7 +48,7 @@ type Notifier struct {
 }
 
 // New returns a new Webhook.
-func New(conf *config.WebhookConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(conf *WebhookConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	client, err := commoncfg.NewClientFromConfig(*conf.HTTPConfig, "webhook", httpOpts...)
 	if err != nil {
 		return nil, err

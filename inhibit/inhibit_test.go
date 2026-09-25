@@ -21,7 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 
-	"github.com/prometheus/alertmanager/config"
+	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/pkg/labels"
 	"github.com/prometheus/alertmanager/provider"
 	"github.com/prometheus/alertmanager/store"
@@ -141,19 +141,19 @@ func TestInhibitRuleHasEqual(t *testing.T) {
 func TestInhibitRuleMatches(t *testing.T) {
 	t.Parallel()
 
-	rule1 := config.InhibitRule{
+	rule1 := amcommoncfg.InhibitRule{
 		SourceMatch: map[string]string{"s1": "1"},
 		TargetMatch: map[string]string{"t1": "1"},
 		Equal:       []string{"e"},
 	}
-	rule2 := config.InhibitRule{
+	rule2 := amcommoncfg.InhibitRule{
 		SourceMatch: map[string]string{"s2": "1"},
 		TargetMatch: map[string]string{"t2": "1"},
 		Equal:       []string{"e"},
 	}
 
 	m := types.NewMarker(prometheus.NewRegistry())
-	ih := NewInhibitor(nil, []config.InhibitRule{rule1, rule2}, m, nopLogger)
+	ih := NewInhibitor(nil, []amcommoncfg.InhibitRule{rule1, rule2}, m, nopLogger)
 	now := time.Now()
 	// Active alert that matches the source filter of rule1.
 	sourceAlert1 := &types.Alert{
@@ -237,19 +237,19 @@ func TestInhibitRuleMatches(t *testing.T) {
 func TestInhibitRuleMatchers(t *testing.T) {
 	t.Parallel()
 
-	rule1 := config.InhibitRule{
-		SourceMatchers: config.Matchers{&labels.Matcher{Type: labels.MatchEqual, Name: "s1", Value: "1"}},
-		TargetMatchers: config.Matchers{&labels.Matcher{Type: labels.MatchNotEqual, Name: "t1", Value: "1"}},
+	rule1 := amcommoncfg.InhibitRule{
+		SourceMatchers: amcommoncfg.Matchers{&labels.Matcher{Type: labels.MatchEqual, Name: "s1", Value: "1"}},
+		TargetMatchers: amcommoncfg.Matchers{&labels.Matcher{Type: labels.MatchNotEqual, Name: "t1", Value: "1"}},
 		Equal:          []string{"e"},
 	}
-	rule2 := config.InhibitRule{
-		SourceMatchers: config.Matchers{&labels.Matcher{Type: labels.MatchEqual, Name: "s2", Value: "1"}},
-		TargetMatchers: config.Matchers{&labels.Matcher{Type: labels.MatchEqual, Name: "t2", Value: "1"}},
+	rule2 := amcommoncfg.InhibitRule{
+		SourceMatchers: amcommoncfg.Matchers{&labels.Matcher{Type: labels.MatchEqual, Name: "s2", Value: "1"}},
+		TargetMatchers: amcommoncfg.Matchers{&labels.Matcher{Type: labels.MatchEqual, Name: "t2", Value: "1"}},
 		Equal:          []string{"e"},
 	}
 
 	m := types.NewMarker(prometheus.NewRegistry())
-	ih := NewInhibitor(nil, []config.InhibitRule{rule1, rule2}, m, nopLogger)
+	ih := NewInhibitor(nil, []amcommoncfg.InhibitRule{rule1, rule2}, m, nopLogger)
 	now := time.Now()
 	// Active alert that matches the source filter of rule1.
 	sourceAlert1 := &types.Alert{
@@ -370,8 +370,8 @@ func TestInhibit(t *testing.T) {
 	t.Parallel()
 
 	now := time.Now()
-	inhibitRule := func() config.InhibitRule {
-		return config.InhibitRule{
+	inhibitRule := func() amcommoncfg.InhibitRule {
+		return amcommoncfg.InhibitRule{
 			SourceMatch: map[string]string{"s": "1"},
 			TargetMatch: map[string]string{"t": "1"},
 			Equal:       []string{"e"},
@@ -452,7 +452,7 @@ func TestInhibit(t *testing.T) {
 	} {
 		ap := newFakeAlerts(tc.alerts)
 		mk := types.NewMarker(prometheus.NewRegistry())
-		inhibitor := NewInhibitor(ap, []config.InhibitRule{inhibitRule()}, mk, nopLogger)
+		inhibitor := NewInhibitor(ap, []amcommoncfg.InhibitRule{inhibitRule()}, mk, nopLogger)
 
 		go func() {
 			for ap.finished != nil {
