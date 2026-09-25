@@ -16,14 +16,13 @@ package v2
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/go-openapi/analysis"
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/runtime/middleware"
@@ -71,7 +70,7 @@ type API struct {
 	route              *dispatch.Route
 	setAlertStatus     setAlertStatusFn
 
-	logger log.Logger
+	logger *slog.Logger
 	m      *metrics.Alerts
 
 	Handler http.Handler
@@ -90,7 +89,7 @@ func NewAPI(
 	sf getAlertStatusFn,
 	silences *silence.Silences,
 	peer cluster.ClusterPeer,
-	l log.Logger,
+	l *slog.Logger,
 	r prometheus.Registerer,
 ) (*API, error) {
 	api := API{
@@ -151,8 +150,8 @@ func setResponseHeaders(h http.Handler) http.Handler {
 	})
 }
 
-func (api *API) requestLogger(req *http.Request) log.Logger {
-	return log.With(api.logger, "path", req.URL.Path, "method", req.Method)
+func (api *API) requestLogger(req *http.Request) *slog.Logger {
+	return api.logger.With("path", req.URL.Path, "method", req.Method)
 }
 
 // Update sets the API struct members that may change between reloads of alertmanager.
@@ -248,14 +247,14 @@ func (api *API) getAlertsHandler(params alert_ops.GetAlertsParams) middleware.Re
 
 	matchers, err := parseFilter(params.Filter)
 	if err != nil {
-		level.Debug(logger).Log("msg", "Failed to parse matchers", "err", err)
+		logger.Debug("Failed to parse matchers", "err", err)
 		return alertgroup_ops.NewGetAlertGroupsBadRequest().WithPayload(err.Error())
 	}
 
 	if params.Receiver != nil {
 		receiverFilter, err = regexp.Compile("^(?:" + *params.Receiver + ")$")
 		if err != nil {
-			level.Debug(logger).Log("msg", "Failed to compile receiver regex", "err", err)
+			logger.Debug("Failed to compile receiver regex", "err", err)
 			return alert_ops.
 				NewGetAlertsBadRequest().
 				WithPayload(
@@ -300,7 +299,7 @@ func (api *API) getAlertsHandler(params alert_ops.GetAlertsParams) middleware.Re
 	api.mtx.RUnlock()
 
 	if err != nil {
-		level.Error(logger).Log("msg", "Failed to get alerts", "err", err)
+		logger.Error("Failed to get alerts", "err", err)
 		return alert_ops.NewGetAlertsInternalServerError().WithPayload(err.Error())
 	}
 	sort.Slice(res, func(i, j int) bool {
@@ -360,12 +359,12 @@ func (api *API) postAlertsHandler(params alert_ops.PostAlertsParams) middleware.
 		validAlerts = append(validAlerts, a)
 	}
 	if err := api.alerts.Put(validAlerts...); err != nil {
-		level.Error(logger).Log("msg", "Failed to create alerts", "err", err)
+		logger.Error("Failed to create alerts", "err", err)
 		return alert_ops.NewPostAlertsInternalServerError().WithPayload(err.Error())
 	}
 
 	if validationErrs.Len() > 0 {
-		level.Error(logger).Log("msg", "Failed to validate alerts", "err", validationErrs.Error())
+		logger.Error("Failed to validate alerts", "err", validationErrs.Error())
 		return alert_ops.NewPostAlertsBadRequest().WithPayload(validationErrs.Error())
 	}
 
@@ -377,7 +376,7 @@ func (api *API) getAlertGroupsHandler(params alertgroup_ops.GetAlertGroupsParams
 
 	matchers, err := parseFilter(params.Filter)
 	if err != nil {
-		level.Debug(logger).Log("msg", "Failed to parse matchers", "err", err)
+		logger.Debug("Failed to parse matchers", "err", err)
 		return alertgroup_ops.NewGetAlertGroupsBadRequest().WithPayload(err.Error())
 	}
 
@@ -385,7 +384,7 @@ func (api *API) getAlertGroupsHandler(params alertgroup_ops.GetAlertGroupsParams
 	if params.Receiver != nil {
 		receiverFilter, err = regexp.Compile("^(?:" + *params.Receiver + ")$")
 		if err != nil {
-			level.Error(logger).Log("msg", "Failed to compile receiver regex", "err", err)
+			logger.Error("Failed to compile receiver regex", "err", err)
 			return alertgroup_ops.
 				NewGetAlertGroupsBadRequest().
 				WithPayload(
@@ -508,13 +507,13 @@ func (api *API) getSilencesHandler(params silence_ops.GetSilencesParams) middlew
 
 	matchers, err := parseFilter(params.Filter)
 	if err != nil {
-		level.Debug(logger).Log("msg", "Failed to parse matchers", "err", err)
+		logger.Debug("Failed to parse matchers", "err", err)
 		return silence_ops.NewGetSilencesBadRequest().WithPayload(err.Error())
 	}
 
 	psils, _, err := api.silences.Query()
 	if err != nil {
-		level.Error(logger).Log("msg", "Failed to get silences", "err", err)
+		logger.Error("Failed to get silences", "err", err)
 		return silence_ops.NewGetSilencesInternalServerError().WithPayload(err.Error())
 	}
 
@@ -525,7 +524,7 @@ func (api *API) getSilencesHandler(params silence_ops.GetSilencesParams) middlew
 		}
 		silence, err := GettableSilenceFromProto(ps)
 		if err != nil {
-			level.Error(logger).Log("msg", "Failed to unmarshal silence from proto", "err", err)
+			logger.Error("Failed to unmarshal silence from proto", "err", err)
 			return silence_ops.NewGetSilencesInternalServerError().WithPayload(err.Error())
 		}
 		sils = append(sils, &silence)
@@ -604,18 +603,18 @@ func (api *API) getSilenceHandler(params silence_ops.GetSilenceParams) middlewar
 
 	sils, _, err := api.silences.Query(silence.QIDs(params.SilenceID.String()))
 	if err != nil {
-		level.Error(logger).Log("msg", "Failed to get silence by id", "err", err, "id", params.SilenceID.String())
+		logger.Error("Failed to get silence by id", "err", err, "id", params.SilenceID.String())
 		return silence_ops.NewGetSilenceInternalServerError().WithPayload(err.Error())
 	}
 
 	if len(sils) == 0 {
-		level.Error(logger).Log("msg", "Failed to find silence", "err", err, "id", params.SilenceID.String())
+		logger.Error("Failed to find silence", "err", err, "id", params.SilenceID.String())
 		return silence_ops.NewGetSilenceNotFound()
 	}
 
 	sil, err := GettableSilenceFromProto(sils[0])
 	if err != nil {
-		level.Error(logger).Log("msg", "Failed to convert unmarshal from proto", "err", err)
+		logger.Error("Failed to convert unmarshal from proto", "err", err)
 		return silence_ops.NewGetSilenceInternalServerError().WithPayload(err.Error())
 	}
 
@@ -627,7 +626,7 @@ func (api *API) deleteSilenceHandler(params silence_ops.DeleteSilenceParams) mid
 
 	sid := params.SilenceID.String()
 	if err := api.silences.Expire(sid); err != nil {
-		level.Error(logger).Log("msg", "Failed to expire silence", "err", err)
+		logger.Error("Failed to expire silence", "err", err)
 		if errors.Is(err, silence.ErrNotFound) {
 			return silence_ops.NewDeleteSilenceNotFound()
 		}
@@ -641,7 +640,7 @@ func (api *API) postSilencesHandler(params silence_ops.PostSilencesParams) middl
 
 	sil, err := PostableSilenceToProto(params.Silence)
 	if err != nil {
-		level.Error(logger).Log("msg", "Failed to marshal silence to proto", "err", err)
+		logger.Error("Failed to marshal silence to proto", "err", err)
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(
 			fmt.Sprintf("failed to convert API silence to internal silence: %v", err.Error()),
 		)
@@ -649,18 +648,18 @@ func (api *API) postSilencesHandler(params silence_ops.PostSilencesParams) middl
 
 	if sil.StartsAt.After(sil.EndsAt) || sil.StartsAt.Equal(sil.EndsAt) {
 		msg := "Failed to create silence: start time must be before end time"
-		level.Error(logger).Log("msg", msg, "starts_at", sil.StartsAt, "ends_at", sil.EndsAt)
+		logger.Error(msg, "starts_at", sil.StartsAt, "ends_at", sil.EndsAt)
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(msg)
 	}
 
 	if sil.EndsAt.Before(time.Now()) {
 		msg := "Failed to create silence: end time can't be in the past"
-		level.Error(logger).Log("msg", msg, "ends_at", sil.EndsAt)
+		logger.Error(msg, "ends_at", sil.EndsAt)
 		return silence_ops.NewPostSilencesBadRequest().WithPayload(msg)
 	}
 
 	if err = api.silences.Set(sil); err != nil {
-		level.Error(logger).Log("msg", "Failed to create silence", "err", err)
+		logger.Error("Failed to create silence", "err", err)
 		if errors.Is(err, silence.ErrNotFound) {
 			return silence_ops.NewPostSilencesNotFound().WithPayload(err.Error())
 		}

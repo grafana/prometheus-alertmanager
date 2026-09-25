@@ -39,9 +39,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 
@@ -188,7 +188,7 @@ func notifyEmailWithContext(ctx context.Context, cfg *config.EmailConfig, server
 		return nil, false, err
 	}
 	tmpl.ExternalURL, _ = url.Parse("http://am")
-	email := New(cfg, tmpl, log.NewNopLogger())
+	email := New(cfg, tmpl, promslog.NewNopLogger())
 
 	retry, err := email.Notify(ctx, firingAlert)
 	if err != nil {
@@ -606,7 +606,7 @@ func TestEmailNotifyWithAuthentication(t *testing.T) {
 
 func TestEmailConfigNoAuthMechs(t *testing.T) {
 	email := &Email{
-		conf: &config.EmailConfig{AuthUsername: "test"}, tmpl: &template.Template{}, logger: log.NewNopLogger(),
+		conf: &config.EmailConfig{AuthUsername: "test"}, tmpl: &template.Template{}, logger: promslog.NewNopLogger(),
 	}
 	_, err := email.auth("")
 	require.Error(t, err)
@@ -616,7 +616,7 @@ func TestEmailConfigNoAuthMechs(t *testing.T) {
 func TestEmailConfigMissingAuthParam(t *testing.T) {
 	conf := &config.EmailConfig{AuthUsername: "test"}
 	email := &Email{
-		conf: conf, tmpl: &template.Template{}, logger: log.NewNopLogger(),
+		conf: conf, tmpl: &template.Template{}, logger: promslog.NewNopLogger(),
 	}
 	_, err := email.auth("CRAM-MD5")
 	require.Error(t, err)
@@ -637,7 +637,7 @@ func TestEmailConfigMissingAuthParam(t *testing.T) {
 
 func TestEmailNoUsernameStillOk(t *testing.T) {
 	email := &Email{
-		conf: &config.EmailConfig{}, tmpl: &template.Template{}, logger: log.NewNopLogger(),
+		conf: &config.EmailConfig{}, tmpl: &template.Template{}, logger: promslog.NewNopLogger(),
 	}
 	a, err := email.auth("CRAM-MD5")
 	require.NoError(t, err)
