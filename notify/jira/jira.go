@@ -39,6 +39,11 @@ const (
 	maxDescriptionLenRunes = 32767
 )
 
+// templateFunc stands in for upstream's template.TemplateFunc, which does not
+// exist in this fork's shared template package yet (shared-runtime closure,
+// pending commander approval -- see the jira sync report).
+type templateFunc func(string) (string, error)
+
 // Notifier implements a Notifier for JIRA notifications.
 type Notifier struct {
 	conf    *JiraConfig
@@ -71,6 +76,7 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 	}
 
 	logger := n.logger.With("group_key", key.String())
+	logger.Debug("extracted group key")
 
 	var (
 		alerts = types.Alerts(as...)
@@ -86,7 +92,7 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		method = http.MethodPost
 	)
 
-	existingIssue, shouldRetry, err := n.searchExistingIssue(ctx, logger, key.Hash(), alerts.HasFiring())
+	existingIssue, shouldRetry, err := n.searchExistingIssue(ctx, logger, key.Hash(), alerts.HasFiring(), tmplTextFunc)
 	if err != nil {
 		return shouldRetry, fmt.Errorf("failed to look up existing issues: %w", err)
 	}
@@ -101,7 +107,6 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 	} else {
 		path = "issue/" + existingIssue.Key
 		method = http.MethodPut
-
 		logger.Debug("updating existing issue", "issue_key", existingIssue.Key, "summary_update_enabled", n.conf.Summary.EnableUpdateValue(), "description_update_enabled", n.conf.Description.EnableUpdateValue())
 	}
 
@@ -133,8 +138,22 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 		return issue{}, fmt.Errorf("summary template: %w", err)
 	}
 
+	project, err := tmplTextFunc(n.conf.Project)
+	if err != nil {
+		return issue{}, fmt.Errorf("project template: %w", err)
+	}
+	issueType, err := tmplTextFunc(n.conf.IssueType)
+	if err != nil {
+		return issue{}, fmt.Errorf("issue_type template: %w", err)
+	}
+
 	// Recursively convert any maps to map[string]interface{}, filtering out all non-string keys, so the json encoder
 	// doesn't blow up when marshaling JIRA requests.
+	//
+	// Upstream templates each custom field value via template.DeepCopyWithTemplate,
+	// which this fork's shared template package does not yet expose (shared-runtime
+	// closure, pending commander approval -- see the jira sync report); custom
+	// field values are therefore not templated here.
 	fieldsWithStringKeys, err := tcontainer.ConvertToMarshalMap(n.conf.Fields, func(v string) string { return v })
 	if err != nil {
 		return issue{}, fmt.Errorf("convertToMarshalMap: %w", err)
@@ -146,8 +165,8 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 	}
 
 	requestBody := issue{Fields: &issueFields{
-		Project:   &issueProject{Key: n.conf.Project},
-		Issuetype: &idNameValue{Name: n.conf.IssueType},
+		Project:   &issueProject{Key: project},
+		Issuetype: &idNameValue{Name: issueType},
 		Summary:   &summary,
 		Labels:    make([]string, 0, len(n.conf.Labels)+1),
 		Fields:    fieldsWithStringKeys,
@@ -163,7 +182,7 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 		logger.Warn("Truncated description", "max_runes", maxDescriptionLenRunes)
 	}
 
-	var description any
+	var description *jiraDescription
 	descriptionCopy := issueDescriptionString
 	if isAPIv3Path(n.conf.APIURL.Path) {
 		descriptionCopy = strings.TrimSpace(descriptionCopy)
@@ -171,11 +190,16 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 			if !json.Valid([]byte(descriptionCopy)) {
 				return issue{}, fmt.Errorf("description template: invalid JSON for API v3")
 			}
-			description = append(json.RawMessage(nil), []byte(descriptionCopy)...)
+			raw := json.RawMessage(descriptionCopy)
+			description = &jiraDescription{
+				RawJSONDescription: append(json.RawMessage(nil), raw...),
+			}
 		}
 	} else if descriptionCopy != "" {
-		description = descriptionCopy
+		desc := descriptionCopy
+		description = &jiraDescription{StringDescription: &desc}
 	}
+
 	requestBody.Fields.Description = description
 
 	for i, label := range n.conf.Labels {
@@ -200,27 +224,36 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 	return requestBody, nil
 }
 
-func (n *Notifier) searchExistingIssue(ctx context.Context, logger *slog.Logger, groupID string, firing bool) (*issue, bool, error) {
+func (n *Notifier) searchExistingIssue(ctx context.Context, logger *slog.Logger, groupID string, firing bool, tmplTextFunc templateFunc) (*issue, bool, error) {
 	jql := strings.Builder{}
 
 	if n.conf.WontFixResolution != "" {
-		jql.WriteString(fmt.Sprintf(`resolution != %q and `, n.conf.WontFixResolution))
+		// JQL's != on resolution silently excludes issues whose resolution
+		// is EMPTY (unresolved). Use (resolution is EMPTY or resolution != X)
+		// so open issues remain in the candidate set and only the won't-fix
+		// resolved ones are filtered out. See prometheus/alertmanager#4295.
+		fmt.Fprintf(&jql, `(resolution is EMPTY or resolution != %q) and `, n.conf.WontFixResolution)
 	}
 
-	// If the group is firing, do not search for closed issues unless a reopen transition is defined.
+	// If the group is firing, search for open issues. If a reopen transition is
+	// defined, also search for issues that were closed within the reopen duration.
 	if firing {
-		if n.conf.ReopenTransition == "" {
+		reopenDuration := int64(time.Duration(n.conf.ReopenDuration).Minutes())
+		if n.conf.ReopenTransition != "" && reopenDuration > 0 {
+			fmt.Fprintf(&jql, `(resolutiondate is EMPTY OR resolutiondate >= -%dm) and `, reopenDuration)
+		} else {
 			jql.WriteString(`statusCategory != Done and `)
 		}
 	} else {
-		reopenDuration := int64(time.Duration(n.conf.ReopenDuration).Minutes())
-		if reopenDuration != 0 {
-			jql.WriteString(fmt.Sprintf(`(resolutiondate is EMPTY OR resolutiondate >= -%dm) and `, reopenDuration))
-		}
+		jql.WriteString(`statusCategory != Done and `)
 	}
 
 	alertLabel := fmt.Sprintf("ALERT{%s}", groupID)
-	jql.WriteString(fmt.Sprintf(`project=%q and labels=%q order by status ASC,resolutiondate DESC`, n.conf.Project, alertLabel))
+	project, err := tmplTextFunc(n.conf.Project)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid project template or value: %w", err)
+	}
+	fmt.Fprintf(&jql, `project=%q and labels=%q order by status ASC,resolutiondate DESC`, project, alertLabel)
 
 	requestBody, searchPath := n.prepareSearchRequest(jql.String())
 
@@ -237,12 +270,13 @@ func (n *Notifier) searchExistingIssue(ctx context.Context, logger *slog.Logger,
 		return nil, false, err
 	}
 
-	if len(issueSearchResult.Issues) == 0 {
+	issuesCount := len(issueSearchResult.Issues)
+	if issuesCount == 0 {
 		logger.Debug("found no existing issue")
 		return nil, false, nil
 	}
 
-	if len(issueSearchResult.Issues) > 1 {
+	if issuesCount > 1 {
 		logger.Warn("more than one issue matched, selecting the most recently resolved", "selected_issue", issueSearchResult.Issues[0].Key)
 	}
 
@@ -323,6 +357,10 @@ func (n *Notifier) transitionIssue(ctx context.Context, logger *slog.Logger, i *
 		}
 
 		transition = n.conf.ResolveTransition
+	}
+
+	if transition == "" {
+		return false, nil
 	}
 
 	transitionID, shouldRetry, err := n.getIssueTransitionByName(ctx, i.Key, transition)
