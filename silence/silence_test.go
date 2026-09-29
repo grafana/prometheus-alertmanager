@@ -25,11 +25,11 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-	"github.com/go-kit/log"
 	"github.com/matttproud/golang_protobuf_extensions/pbutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 
@@ -192,7 +192,7 @@ func TestSilences_Maintenance_DefaultMaintenanceFuncDoesntCrash(t *testing.T) {
 	f, err := os.CreateTemp("", "snapshot")
 	require.NoError(t, err, "creating temp file failed")
 	clock := clock.NewMock()
-	s := &Silences{st: state{}, logger: log.NewNopLogger(), clock: clock, metrics: newMetrics(nil, nil)}
+	s := &Silences{st: state{}, logger: promslog.NewNopLogger(), clock: clock, metrics: newMetrics(nil, nil)}
 	stopc := make(chan struct{})
 
 	done := make(chan struct{})
@@ -213,7 +213,7 @@ func TestSilences_Maintenance_SupportsCustomCallback(t *testing.T) {
 	require.NoError(t, err, "creating temp file failed")
 	clock := clock.NewMock()
 	reg := prometheus.NewRegistry()
-	s := &Silences{st: state{}, logger: log.NewNopLogger(), clock: clock}
+	s := &Silences{st: state{}, logger: promslog.NewNopLogger(), clock: clock}
 	s.metrics = newMetrics(reg, s)
 	stopc := make(chan struct{})
 
@@ -1386,7 +1386,7 @@ func TestSilencer(t *testing.T) {
 	now := ss.nowUTC()
 
 	m := types.NewMarker(prometheus.NewRegistry())
-	s := NewSilencer(ss, m, log.NewNopLogger())
+	s := NewSilencer(ss, m, promslog.NewNopLogger())
 
 	require.False(t, s.Mutes(model.LabelSet{"foo": "bar"}), "expected alert not silenced without any silences")
 
@@ -1626,14 +1626,14 @@ func TestValidateUTF8Matcher(t *testing.T) {
 	}
 
 	// Change the mode to UTF-8 mode.
-	ff, err := featurecontrol.NewFlags(log.NewNopLogger(), featurecontrol.FeatureUTF8StrictMode)
+	ff, err := featurecontrol.NewFlags(promslog.NewNopLogger(), featurecontrol.FeatureUTF8StrictMode)
 	require.NoError(t, err)
-	compat.InitFromFlags(log.NewNopLogger(), ff)
+	compat.InitFromFlags(promslog.NewNopLogger(), ff)
 
 	// Restore the mode to classic at the end of the test.
-	ff, err = featurecontrol.NewFlags(log.NewNopLogger(), featurecontrol.FeatureClassicMode)
+	ff, err = featurecontrol.NewFlags(promslog.NewNopLogger(), featurecontrol.FeatureClassicMode)
 	require.NoError(t, err)
-	defer compat.InitFromFlags(log.NewNopLogger(), ff)
+	defer compat.InitFromFlags(promslog.NewNopLogger(), ff)
 
 	for _, c := range cases {
 		checkErr(t, c.err, validateMatcher(c.m))

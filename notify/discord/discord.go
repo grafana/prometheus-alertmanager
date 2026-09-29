@@ -18,12 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 
@@ -50,14 +49,14 @@ const (
 type Notifier struct {
 	conf       *DiscordConfig
 	tmpl       *template.Template
-	logger     log.Logger
+	logger     *slog.Logger
 	client     *http.Client
 	retrier    *notify.Retrier
 	webhookURL *amcommoncfg.SecretURL
 }
 
 // New returns a new Discord notifier.
-func New(c *DiscordConfig, t *template.Template, l log.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
+func New(c *DiscordConfig, t *template.Template, l *slog.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
 	client, err := commoncfg.NewClientFromConfig(*c.HTTPConfig, "discord", httpOpts...)
 	if err != nil {
 		return nil, err
@@ -91,10 +90,11 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		return false, err
 	}
 
-	level.Debug(n.logger).Log("incident", key)
+	logger := n.logger.With("group_key", key)
+	logger.Debug("extracted group key")
 
 	alerts := types.Alerts(as...)
-	data := notify.GetTemplateData(ctx, n.tmpl, as, n.logger)
+	data := notify.GetTemplateData(ctx, n.tmpl, as, logger)
 	tmpl := notify.TmplText(n.tmpl, data, &err)
 	if err != nil {
 		return false, err
@@ -105,14 +105,14 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 		return false, err
 	}
 	if truncated {
-		level.Warn(n.logger).Log("msg", "Truncated title", "key", key, "max_runes", maxTitleLenRunes)
+		logger.Warn("Truncated title", "max_runes", maxTitleLenRunes)
 	}
 	description, truncated := notify.TruncateInRunes(tmpl(n.conf.Message), maxDescriptionLenRunes)
 	if err != nil {
 		return false, err
 	}
 	if truncated {
-		level.Warn(n.logger).Log("msg", "Truncated message", "key", key, "max_runes", maxDescriptionLenRunes)
+		logger.Warn("Truncated message", "max_runes", maxDescriptionLenRunes)
 	}
 
 	color := colorGrey

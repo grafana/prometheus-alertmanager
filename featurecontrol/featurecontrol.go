@@ -16,10 +16,8 @@ package featurecontrol
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
-
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 )
 
 const (
@@ -41,7 +39,7 @@ type Flagger interface {
 }
 
 type Flags struct {
-	logger                       log.Logger
+	logger                       *slog.Logger
 	enableReceiverNamesInMetrics bool
 	classicMode                  bool
 	utf8StrictMode               bool
@@ -79,7 +77,7 @@ func enableUTF8StrictMode() flagOption {
 	}
 }
 
-func NewFlags(logger log.Logger, features string) (Flagger, error) {
+func NewFlags(logger *slog.Logger, features string) (Flagger, error) {
 	fc := &Flags{logger: logger}
 	opts := []flagOption{}
 
@@ -91,13 +89,13 @@ func NewFlags(logger log.Logger, features string) (Flagger, error) {
 		switch feature {
 		case FeatureReceiverNameInMetrics:
 			opts = append(opts, enableReceiverNameInMetrics())
-			level.Warn(logger).Log("msg", "Experimental receiver name in metrics enabled")
+			logger.Warn("Experimental receiver name in metrics enabled")
 		case FeatureClassicMode:
 			opts = append(opts, enableClassicMode())
-			level.Warn(logger).Log("msg", "Classic mode enabled")
+			logger.Warn("Classic mode enabled")
 		case FeatureUTF8StrictMode:
 			opts = append(opts, enableUTF8StrictMode())
-			level.Warn(logger).Log("msg", "UTF-8 strict mode enabled")
+			logger.Warn("UTF-8 strict mode enabled")
 		default:
 			return nil, fmt.Errorf("unknown option '%s' for --enable-feature", feature)
 		}

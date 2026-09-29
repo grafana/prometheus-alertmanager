@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"mime"
 	"mime/multipart"
@@ -31,8 +32,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	commoncfg "github.com/prometheus/common/config"
 
 	"github.com/prometheus/alertmanager/config"
@@ -45,12 +44,12 @@ import (
 type Email struct {
 	conf     *config.EmailConfig
 	tmpl     *template.Template
-	logger   log.Logger
+	logger   *slog.Logger
 	hostname string
 }
 
 // New returns a new Email notifier.
-func New(c *config.EmailConfig, t *template.Template, l log.Logger) *Email {
+func New(c *config.EmailConfig, t *template.Template, l *slog.Logger) *Email {
 	if _, ok := c.Headers["Subject"]; !ok {
 		c.Headers["Subject"] = config.DefaultEmailSubject
 	}
@@ -75,7 +74,7 @@ func (n *Email) auth(mechs string) (smtp.Auth, error) {
 
 	// If no username is set, keep going without authentication.
 	if n.conf.AuthUsername == "" {
-		level.Debug(n.logger).Log("msg", "smtp_auth_username is not configured. Attempting to send email without authenticating")
+		n.logger.Debug("smtp_auth_username is not configured. Attempting to send email without authenticating")
 		return nil, nil
 	}
 
@@ -161,7 +160,7 @@ func (n *Email) Notify(ctx context.Context, as ...*types.Alert) (bool, error) {
 	defer func() {
 		// Try to clean up after ourselves but don't log anything if something has failed.
 		if err := c.Quit(); success && err != nil {
-			level.Warn(n.logger).Log("msg", "failed to close SMTP connection", "err", err)
+			n.logger.Warn("failed to close SMTP connection", "err", err)
 		}
 	}()
 

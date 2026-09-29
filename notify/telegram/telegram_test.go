@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
@@ -49,7 +49,7 @@ func TestTelegramRetry(t *testing.T) {
 			APIUrl:     &fakeURL,
 		},
 		test.CreateTmpl(t),
-		log.NewNopLogger(),
+		promslog.NewNopLogger(),
 	)
 	require.NoError(t, err)
 
@@ -115,7 +115,7 @@ func TestTelegramNotify(t *testing.T) {
 
 			tc.cfg.APIUrl = &amcommoncfg.URL{URL: u}
 
-			notifier, err := New(&tc.cfg, test.CreateTmpl(t), log.NewNopLogger())
+			notifier, err := New(&tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
 			require.NoError(t, err)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -16,16 +16,17 @@ package dispatch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/go-kit/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
@@ -138,7 +139,7 @@ func TestAggrGroup(t *testing.T) {
 	}
 
 	// Test regular situation where we wait for group_wait to send out alerts.
-	ag := newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), standardTimerFactory, nil)
+	ag := newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, nil)
 	go ag.run(ntfy)
 
 	ag.insert(a1)
@@ -192,7 +193,7 @@ func TestAggrGroup(t *testing.T) {
 	// immediate flushing.
 	// Finally, set all alerts to be resolved. After successful notify the aggregation group
 	// should empty itself.
-	ag = newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), standardTimerFactory, nil)
+	ag = newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, nil)
 	go ag.run(ntfy)
 
 	ag.insert(a1)
@@ -387,7 +388,7 @@ route:
 		t.Fatal(err)
 	}
 
-	logger := log.NewNopLogger()
+	logger := promslog.NewNopLogger()
 	route := NewRoute(conf.Route, nil)
 	marker := types.NewMarker(prometheus.NewRegistry())
 	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
@@ -525,7 +526,7 @@ route:
 		t.Fatal(err)
 	}
 
-	logger := log.NewNopLogger()
+	logger := promslog.NewNopLogger()
 	route := NewRoute(conf.Route, nil)
 	marker := types.NewMarker(prometheus.NewRegistry())
 	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
@@ -609,7 +610,7 @@ func (r *recordStage) Alerts() []*types.Alert {
 	return alerts
 }
 
-func (r *recordStage) Exec(ctx context.Context, l log.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+func (r *recordStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
 	gk, ok := notify.GroupKey(ctx)
@@ -647,7 +648,7 @@ func newAlert(labels model.LabelSet) *types.Alert {
 }
 
 func TestDispatcherRace(t *testing.T) {
-	logger := log.NewNopLogger()
+	logger := promslog.NewNopLogger()
 	marker := types.NewMarker(prometheus.NewRegistry())
 	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
 	if err != nil {
@@ -664,7 +665,7 @@ func TestDispatcherRace(t *testing.T) {
 func TestDispatcherRaceOnFirstAlertNotDeliveredWhenGroupWaitIsZero(t *testing.T) {
 	const numAlerts = 5000
 
-	logger := log.NewNopLogger()
+	logger := promslog.NewNopLogger()
 	marker := types.NewMarker(prometheus.NewRegistry())
 	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
 	if err != nil {
@@ -731,7 +732,7 @@ func TestAggrGroupFlushDeletesMarkerEntries(t *testing.T) {
 
 	newGroup := func() (types.Marker, *aggrGroup) {
 		m := types.NewMarker(prometheus.NewRegistry())
-		return m, newAggrGroup(context.Background(), lset, route, nil, log.NewNopLogger(), standardTimerFactory, m)
+		return m, newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, m)
 	}
 
 	// nfWithInhibit simulates MuteStage calling SetInhibited unconditionally for

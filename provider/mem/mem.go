@@ -15,11 +15,10 @@ package mem
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 
@@ -43,7 +42,7 @@ type Alerts struct {
 
 	callback AlertStoreCallback
 
-	logger log.Logger
+	logger *slog.Logger
 }
 
 type AlertStoreCallback interface {
@@ -85,7 +84,7 @@ func (a *Alerts) registerMetrics(r prometheus.Registerer) {
 }
 
 // NewAlerts returns a new alert provider.
-func NewAlerts(ctx context.Context, m types.Marker, intervalGC time.Duration, alertCallback AlertStoreCallback, l log.Logger, r prometheus.Registerer) (*Alerts, error) {
+func NewAlerts(ctx context.Context, m types.Marker, intervalGC time.Duration, alertCallback AlertStoreCallback, l *slog.Logger, r prometheus.Registerer) (*Alerts, error) {
 	if alertCallback == nil {
 		alertCallback = noopCallback{}
 	}
@@ -97,7 +96,7 @@ func NewAlerts(ctx context.Context, m types.Marker, intervalGC time.Duration, al
 		cancel:    cancel,
 		listeners: map[int]listeningAlerts{},
 		next:      0,
-		logger:    log.With(l, "component", "provider"),
+		logger:    l.With("component", "provider"),
 		callback:  alertCallback,
 	}
 	a.alerts.SetGCCallback(func(alerts []types.Alert) {
@@ -215,12 +214,12 @@ func (a *Alerts) Put(alerts ...*types.Alert) error {
 		}
 
 		if err := a.callback.PreStore(alert, existing); err != nil {
-			level.Error(a.logger).Log("msg", "pre-store callback returned error on set alert", "err", err)
+			a.logger.Error("pre-store callback returned error on set alert", "err", err)
 			continue
 		}
 
 		if err := a.alerts.Set(alert); err != nil {
-			level.Error(a.logger).Log("msg", "error on set alert", "err", err)
+			a.logger.Error("error on set alert", "err", err)
 			continue
 		}
 
