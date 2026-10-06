@@ -132,6 +132,8 @@ const (
 	keyNow
 	keyMuteTimeIntervals
 	keyActiveTimeIntervals
+	keyNotificationReason
+	keyRouteLabels
 )
 
 // WithReceiverName populates a context with a receiver name.
@@ -157,6 +159,16 @@ func WithResolvedAlerts(ctx context.Context, alerts []uint64) context.Context {
 // WithGroupLabels populates a context with grouping labels.
 func WithGroupLabels(ctx context.Context, lset model.LabelSet) context.Context {
 	return context.WithValue(ctx, keyGroupLabels, lset)
+}
+
+// WithRouteLabels populates a context with route labels.
+func WithRouteLabels(ctx context.Context, rl model.LabelSet) context.Context {
+	return context.WithValue(ctx, keyRouteLabels, rl)
+}
+
+// WithNotificationReason populates a context with a NotifyReason.
+func WithNotificationReason(ctx context.Context, reason NotifyReason) context.Context {
+	return context.WithValue(ctx, keyNotificationReason, reason)
 }
 
 // WithNow populates a context with a now timestamp.
@@ -215,6 +227,19 @@ func GroupKey(ctx context.Context) (string, bool) {
 // second argument is false.
 func GroupLabels(ctx context.Context) (model.LabelSet, bool) {
 	v, ok := ctx.Value(keyGroupLabels).(model.LabelSet)
+	return v, ok
+}
+
+// RouteLabels extracts route labels from the context. Iff none exists, the
+// second argument is false.
+func RouteLabels(ctx context.Context) (model.LabelSet, bool) {
+	v, ok := ctx.Value(keyRouteLabels).(model.LabelSet)
+	return v, ok
+}
+
+// NotificationReason extracts a NotifyReason from the context.
+func NotificationReason(ctx context.Context) (NotifyReason, bool) {
+	v, ok := ctx.Value(keyNotificationReason).(NotifyReason)
 	return v, ok
 }
 
@@ -677,6 +702,37 @@ func hashAlert(a *types.Alert) uint64 {
 	return hash
 }
 
+type NotifyReason int
+
+const (
+	ReasonDoNotNotify NotifyReason = iota
+	ReasonFirstNotification
+	ReasonNewAlertsInGroup
+	ReasonNewResolvedAlerts
+	ReasonAllAlertsResolved
+	ReasonRepeatIntervalElapsed
+	ReasonUnknown
+)
+
+func (r NotifyReason) String() string {
+	switch r {
+	case ReasonDoNotNotify:
+		return "none"
+	case ReasonFirstNotification:
+		return "first notification"
+	case ReasonNewAlertsInGroup:
+		return "new alerts added"
+	case ReasonNewResolvedAlerts:
+		return "some alerts resolved"
+	case ReasonAllAlertsResolved:
+		return "all alerts resolved"
+	case ReasonRepeatIntervalElapsed:
+		return "repeat interval elapsed"
+	default:
+		return "unknown"
+	}
+}
+
 func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint64]struct{}, repeat time.Duration) (bool, string) {
 	// If we haven't notified about the alert group before, notify right away
 	// unless we only have resolved alerts.
@@ -760,7 +816,26 @@ func (n *DedupStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.
 
 	needsUpdate, reason := n.needsUpdate(entry, firingSet, resolvedSet, repeatInterval)
 	if !needsUpdate {
-		return ctx, nil, nil
+		return WithNotificationReason(ctx, ReasonDoNotNotify), nil, nil
+	}
+	// Preserve the dedup decision and log reason while exposing the notification reason to templates.
+	var notificationReason NotifyReason
+	switch reason {
+	case "fire":
+		notificationReason = ReasonFirstNotification
+	case "fire subset":
+		notificationReason = ReasonNewAlertsInGroup
+		if len(entry.FiringAlerts) == 0 {
+			notificationReason = ReasonFirstNotification
+		}
+	case "resolve":
+		notificationReason = ReasonAllAlertsResolved
+	case "resolve subset":
+		notificationReason = ReasonNewResolvedAlerts
+	case "repeat":
+		notificationReason = ReasonRepeatIntervalElapsed
+	default:
+		notificationReason = ReasonUnknown
 	}
 	// now make sure that the current state is from past
 	if entry != nil && entry.Timestamp.After(timeNow) {
@@ -769,8 +844,9 @@ func (n *DedupStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.
 		// In this case, this instance cannot proceed with the pipeline anymore because there is a risk that the instance holds the obsolete alerts, and it could cause flapping or duplicated notifications.
 		// This could happen only in high-availability mode.
 		l.Warn("Timestamp of notification log entry is after the current pipeline timestamp.", "entry_time", entry.Timestamp, "pipeline_time", timeNow, "diff", diff, "aggrGroup", gkey, "alerts", fmt.Sprintf("%+v", alerts), "receiver", n.recv.GroupName, "integration", n.recv.Integration, "needsUpdateReason", reason)
-		return ctx, nil, nil
+		return WithNotificationReason(ctx, ReasonDoNotNotify), nil, nil
 	}
+	ctx = WithNotificationReason(ctx, notificationReason)
 	l.Debug("Need to notify", "aggrGroup", gkey, "receiver", n.recv.GroupName, "integration", n.recv.Integration, "reason", reason)
 	return ctx, alerts, nil
 }

@@ -144,6 +144,7 @@ func TestData(t *testing.T) {
 	for _, tc := range []struct {
 		receiver    string
 		groupLabels model.LabelSet
+		routeLabels model.LabelSet
 		alerts      []*types.Alert
 
 		exp *Data
@@ -151,13 +152,15 @@ func TestData(t *testing.T) {
 		{
 			receiver: "webhook",
 			exp: &Data{
-				Receiver:          "webhook",
-				Status:            "resolved",
-				Alerts:            Alerts{},
-				GroupLabels:       KV{},
-				CommonLabels:      KV{},
-				CommonAnnotations: KV{},
-				ExternalURL:       u.String(),
+				Receiver:           "webhook",
+				Status:             "resolved",
+				Alerts:             Alerts{},
+				NotificationReason: "first notification",
+				GroupLabels:        KV{},
+				CommonLabels:       KV{},
+				CommonAnnotations:  KV{},
+				RouteLabels:        KV{},
+				ExternalURL:        u.String(),
 			},
 		},
 		{
@@ -165,6 +168,7 @@ func TestData(t *testing.T) {
 			groupLabels: model.LabelSet{
 				model.LabelName("job"): model.LabelValue("foo"),
 			},
+			routeLabels: model.LabelSet{"team": "ops"},
 			alerts: []*types.Alert{
 				{
 					Alert: model.Alert{
@@ -214,10 +218,12 @@ func TestData(t *testing.T) {
 						Fingerprint: "3b15fd163d36582e",
 					},
 				},
-				GroupLabels:       KV{"job": "foo"},
-				CommonLabels:      KV{"job": "foo"},
-				CommonAnnotations: KV{"runbook": "foo"},
-				ExternalURL:       u.String(),
+				GroupLabels:        KV{"job": "foo"},
+				CommonLabels:       KV{"job": "foo"},
+				CommonAnnotations:  KV{"runbook": "foo"},
+				RouteLabels:        KV{"team": "ops"},
+				NotificationReason: "first notification",
+				ExternalURL:        u.String(),
 			},
 		},
 		{
@@ -272,16 +278,18 @@ func TestData(t *testing.T) {
 						Fingerprint: "c7e68cb08e3e67f9",
 					},
 				},
-				GroupLabels:       KV{},
-				CommonLabels:      KV{},
-				CommonAnnotations: KV{},
-				ExternalURL:       u.String(),
+				GroupLabels:        KV{},
+				CommonLabels:       KV{},
+				CommonAnnotations:  KV{},
+				RouteLabels:        KV{},
+				NotificationReason: "first notification",
+				ExternalURL:        u.String(),
 			},
 		},
 	} {
 		tc := tc
 		t.Run("", func(t *testing.T) {
-			got := tmpl.Data(tc.receiver, tc.groupLabels, tc.alerts...)
+			got := tmpl.Data(tc.receiver, tc.groupLabels, tc.routeLabels, "first notification", tc.alerts...)
 			require.Equal(t, tc.exp, got)
 		})
 	}

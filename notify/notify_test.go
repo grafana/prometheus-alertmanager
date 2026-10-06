@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -35,6 +36,7 @@ import (
 	"github.com/prometheus/alertmanager/nflog/nflogpb"
 	"github.com/prometheus/alertmanager/silence"
 	"github.com/prometheus/alertmanager/silence/silencepb"
+	"github.com/prometheus/alertmanager/template"
 	"github.com/prometheus/alertmanager/timeinterval"
 	"github.com/prometheus/alertmanager/types"
 )
@@ -327,6 +329,71 @@ func TestDedupStage(t *testing.T) {
 	_, res, err = s.Exec(ctx, promslog.NewNopLogger(), alerts...)
 	require.NoError(t, err)
 	require.Nil(t, res)
+}
+
+func TestDedupNotificationReason(t *testing.T) {
+	now := time.Now()
+	firing := &types.Alert{Alert: model.Alert{Labels: model.LabelSet{"alertname": "firing"}}}
+	resolved := &types.Alert{Alert: model.Alert{Labels: model.LabelSet{"alertname": "resolved"}, EndsAt: now}}
+	cases := []struct {
+		name    string
+		entry   *nflogpb.Entry
+		alerts  []*types.Alert
+		resolve bool
+		want    NotifyReason
+		notify  bool
+	}{
+		{name: "fire", alerts: []*types.Alert{firing}, want: ReasonFirstNotification, notify: true},
+		{name: "no first notification", alerts: []*types.Alert{resolved}, want: ReasonDoNotNotify},
+		{name: "fire subset", entry: &nflogpb.Entry{FiringAlerts: []uint64{9}, Timestamp: now}, alerts: []*types.Alert{firing}, want: ReasonNewAlertsInGroup, notify: true},
+		{name: "fire subset after resolution", entry: &nflogpb.Entry{Timestamp: now}, alerts: []*types.Alert{firing}, want: ReasonFirstNotification, notify: true},
+		{name: "resolve", entry: &nflogpb.Entry{FiringAlerts: []uint64{1}, Timestamp: now}, alerts: []*types.Alert{resolved}, want: ReasonAllAlertsResolved, notify: true},
+		{name: "resolve subset", entry: &nflogpb.Entry{FiringAlerts: []uint64{1}, Timestamp: now}, alerts: []*types.Alert{firing, resolved}, resolve: true, want: ReasonNewResolvedAlerts, notify: true},
+		{name: "repeat", entry: &nflogpb.Entry{FiringAlerts: []uint64{1}, Timestamp: now.Add(-2 * time.Hour)}, alerts: []*types.Alert{firing}, want: ReasonRepeatIntervalElapsed, notify: true},
+		{name: "no repeat", entry: &nflogpb.Entry{FiringAlerts: []uint64{1}, Timestamp: now}, alerts: []*types.Alert{firing}, want: ReasonDoNotNotify},
+		{name: "future entry", entry: &nflogpb.Entry{FiringAlerts: []uint64{9}, Timestamp: now.Add(time.Minute)}, alerts: []*types.Alert{firing}, want: ReasonDoNotNotify},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &DedupStage{
+				hash: func(a *types.Alert) uint64 {
+					if a == firing {
+						return 1
+					}
+					return 2
+				},
+				now:   func() time.Time { return now },
+				recv:  &nflogpb.Receiver{GroupName: "test", Integration: "test"},
+				rs:    sendResolved(tc.resolve),
+				nflog: &testNflog{},
+			}
+			if tc.entry != nil {
+				s.nflog = &testNflog{qres: []*nflogpb.Entry{tc.entry}}
+			}
+			ctx := WithNow(WithRepeatInterval(WithGroupKey(context.Background(), "group"), time.Hour), now)
+			ctx = WithReceiverName(WithGroupLabels(ctx, model.LabelSet{}), "test")
+			ctx, got, err := s.Exec(ctx, promslog.NewNopLogger(), tc.alerts...)
+			require.NoError(t, err)
+			if tc.notify {
+				require.Equal(t, tc.alerts, got)
+			} else {
+				require.Nil(t, got)
+			}
+			reason, ok := NotificationReason(ctx)
+			require.True(t, ok)
+			require.Equal(t, tc.want, reason)
+			data := GetTemplateData(ctx, &template.Template{ExternalURL: &url.URL{}}, tc.alerts, promslog.NewNopLogger())
+			require.Equal(t, tc.want.String(), data.NotificationReason)
+			require.Equal(t, template.KV{}, data.RouteLabels)
+		})
+	}
+}
+
+func TestTemplateDataMissingNotificationReason(t *testing.T) {
+	ctx := WithReceiverName(WithGroupLabels(context.Background(), nil), "test")
+	data := GetTemplateData(ctx, &template.Template{ExternalURL: &url.URL{}}, nil, promslog.NewNopLogger())
+	require.Equal(t, ReasonUnknown.String(), data.NotificationReason)
+	require.Equal(t, template.KV{}, data.RouteLabels)
 }
 
 func TestMultiStage(t *testing.T) {

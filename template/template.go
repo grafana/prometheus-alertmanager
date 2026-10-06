@@ -310,9 +310,12 @@ type Data struct {
 	Status   string `json:"status"`
 	Alerts   Alerts `json:"alerts"`
 
+	NotificationReason string `json:"notification_reason"`
+
 	GroupLabels       KV `json:"groupLabels"`
 	CommonLabels      KV `json:"commonLabels"`
 	CommonAnnotations KV `json:"commonAnnotations"`
+	RouteLabels       KV `json:"routeLabels"`
 
 	ExternalURL string `json:"externalURL"`
 }
@@ -354,20 +357,24 @@ func (as Alerts) Resolved() []Alert {
 }
 
 // Data assembles data for template expansion.
-func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*types.Alert) *Data {
+func (t *Template) Data(recv string, groupLabels, routeLabels model.LabelSet, notificationReason string, alerts ...*types.Alert) *Data {
+	typedAlerts := types.Alerts(alerts...)
+
 	data := &Data{
-		Receiver:          regexp.QuoteMeta(recv),
-		Status:            string(types.Alerts(alerts...).Status()),
-		Alerts:            make(Alerts, 0, len(alerts)),
-		GroupLabels:       KV{},
-		CommonLabels:      KV{},
-		CommonAnnotations: KV{},
-		ExternalURL:       t.ExternalURL.String(),
+		Receiver:           regexp.QuoteMeta(recv),
+		Status:             string(typedAlerts.Status()),
+		Alerts:             make(Alerts, 0, len(alerts)),
+		NotificationReason: notificationReason,
+		GroupLabels:        KV{},
+		CommonLabels:       KV{},
+		CommonAnnotations:  KV{},
+		RouteLabels:        KV{},
+		ExternalURL:        t.ExternalURL.String(),
 	}
 
 	// The call to types.Alert is necessary to correctly resolve the internal
 	// representation to the user representation.
-	for _, a := range types.Alerts(alerts...) {
+	for _, a := range typedAlerts {
 		alert := Alert{
 			Status:       string(a.Status()),
 			Labels:       make(KV, len(a.Labels)),
@@ -388,6 +395,10 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 
 	for k, v := range groupLabels {
 		data.GroupLabels[string(k)] = string(v)
+	}
+
+	for k, v := range routeLabels {
+		data.RouteLabels[string(k)] = string(v)
 	}
 
 	if len(alerts) >= 1 {
