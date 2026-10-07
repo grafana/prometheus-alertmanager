@@ -21,7 +21,7 @@ import (
 	"time"
 
 	commoncfg "github.com/prometheus/common/config"
-	"github.com/prometheus/common/sigv4"
+	"github.com/prometheus/sigv4"
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 )
