@@ -36,6 +36,7 @@ var DefaultRouteOpts = RouteOpts{
 	GroupBy:           map[model.LabelName]struct{}{},
 	GroupByAll:        false,
 	MuteTimeIntervals: []string{},
+	Labels:            model.LabelSet{},
 }
 
 // A Route is a node that contains definitions of how to handle alerts.
@@ -236,6 +237,9 @@ type RouteOpts struct {
 
 	// A list of time intervals for which the route is active.
 	ActiveTimeIntervals []string
+
+	// Merged labels from this route and all of its parent routes.
+	Labels model.LabelSet
 }
 
 func (ro *RouteOpts) String() string {

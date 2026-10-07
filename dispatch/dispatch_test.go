@@ -49,6 +49,7 @@ func TestAggrGroup(t *testing.T) {
 		GroupWait:      1 * time.Second,
 		GroupInterval:  300 * time.Millisecond,
 		RepeatInterval: 1 * time.Hour,
+		Labels:         model.LabelSet{"team": "ops"},
 	}
 	route := &Route{
 		RouteOpts: *opts,
@@ -110,6 +111,9 @@ func TestAggrGroup(t *testing.T) {
 		}
 		if lbls, ok := notify.GroupLabels(ctx); !ok || !reflect.DeepEqual(lbls, lset) {
 			t.Errorf("wrong group labels: %q", lbls)
+		}
+		if lbls, ok := notify.RouteLabels(ctx); !ok || !reflect.DeepEqual(lbls, opts.Labels) {
+			t.Errorf("wrong route labels: %q", lbls)
 		}
 		if rcv, ok := notify.ReceiverName(ctx); !ok || rcv != opts.Receiver {
 			t.Errorf("wrong receiver: %q", rcv)
