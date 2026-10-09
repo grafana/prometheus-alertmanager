@@ -21,7 +21,7 @@ import (
 	"time"
 
 	commoncfg "github.com/prometheus/common/config"
-	"github.com/prometheus/common/sigv4"
+	"github.com/prometheus/sigv4"
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 )
@@ -471,6 +471,10 @@ type SNSConfig struct {
 	Subject     string            `yaml:"subject,omitempty" json:"subject,omitempty"`
 	Message     string            `yaml:"message,omitempty" json:"message,omitempty"`
 	Attributes  map[string]string `yaml:"attributes,omitempty" json:"attributes,omitempty"`
+	// UseAWSHTTPClient forces the AWS SDK's BuildableClient instead of
+	// alertmanager's http_config HTTP client. Auto-enabled when AWS_CA_BUNDLE
+	// is set; set explicitly when configuring ca_bundle via shared AWS config.
+	UseAWSHTTPClient bool `yaml:"use_aws_http_client,omitempty" json:"use_aws_http_client,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
