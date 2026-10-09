@@ -258,6 +258,9 @@ routes:
 			keys = append(keys, r.Key())
 		}
 
+		for _, expected := range test.result {
+			expected.Labels = def.Labels
+		}
 		if !reflect.DeepEqual(matches, test.result) {
 			t.Errorf("\nexpected:\n%v\ngot:\n%v", test.result, matches)
 		}
@@ -608,6 +611,9 @@ routes:
 			keys = append(keys, r.Key())
 		}
 
+		for _, expected := range test.result {
+			expected.Labels = def.Labels
+		}
 		if !reflect.DeepEqual(matches, test.result) {
 			t.Errorf("\nexpected:\n%v\ngot:\n%v", test.result, matches)
 		}
@@ -844,6 +850,9 @@ routes:
 			keys = append(keys, r.Key())
 		}
 
+		for _, expected := range test.result {
+			expected.Labels = def.Labels
+		}
 		if !reflect.DeepEqual(matches, test.result) {
 			t.Errorf("\nexpected:\n%v\ngot:\n%v", test.result, matches)
 		}

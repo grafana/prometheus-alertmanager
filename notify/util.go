@@ -188,7 +188,16 @@ func GetTemplateData(ctx context.Context, tmpl *template.Template, alerts []*typ
 	if !ok {
 		l.Error("Missing group labels")
 	}
-	return tmpl.Data(recv, groupLabels, alerts...)
+	// Route labels are optional (a route may have none, and some callers omit
+	// them); absence is not an error and a nil LabelSet is handled downstream.
+	routeLabels, _ := RouteLabels(ctx)
+	notificationReason, ok := NotificationReason(ctx)
+	if !ok {
+		l.Error("Missing notification reason")
+		notificationReason = ReasonUnknown
+	}
+	data := tmpl.Data(recv, groupLabels, routeLabels, notificationReason.String(), alerts...)
+	return data
 }
 
 func readAll(r io.Reader) string {
