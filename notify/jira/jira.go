@@ -27,7 +27,6 @@ import (
 
 	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
-	"github.com/trivago/tgo/tcontainer"
 
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/template"
@@ -39,11 +38,6 @@ const (
 	maxDescriptionLenRunes = 32767
 )
 
-// templateFunc stands in for upstream's template.TemplateFunc, which does not
-// exist in this fork's shared template package yet (shared-runtime closure,
-// pending commander approval -- see the jira sync report).
-type templateFunc func(string) (string, error)
-
 // Notifier implements a Notifier for JIRA notifications.
 type Notifier struct {
 	conf    *JiraConfig
@@ -54,7 +48,7 @@ type Notifier struct {
 }
 
 func New(c *JiraConfig, t *template.Template, l *slog.Logger, httpOpts ...commoncfg.HTTPClientOption) (*Notifier, error) {
-	client, err := commoncfg.NewClientFromConfig(*c.HTTPConfig, "jira", httpOpts...)
+	client, err := notify.NewClientWithTracing(*c.HTTPConfig, "jira", httpOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +126,7 @@ func (n *Notifier) Notify(ctx context.Context, as ...*types.Alert) (bool, error)
 	return n.transitionIssue(ctx, logger, existingIssue, alerts.HasFiring())
 }
 
-func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Logger, groupID string, tmplTextFunc templateFunc) (issue, error) {
+func (n *Notifier) prepareIssueRequestBody(_ context.Context, logger *slog.Logger, groupID string, tmplTextFunc template.TemplateFunc) (issue, error) {
 	summary, err := tmplTextFunc(n.conf.Summary.Template)
 	if err != nil {
 		return issue{}, fmt.Errorf("summary template: %w", err)
@@ -147,16 +141,12 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 		return issue{}, fmt.Errorf("issue_type template: %w", err)
 	}
 
-	// Recursively convert any maps to map[string]interface{}, filtering out all non-string keys, so the json encoder
-	// doesn't blow up when marshaling JIRA requests.
-	//
-	// Upstream templates each custom field value via template.DeepCopyWithTemplate,
-	// which this fork's shared template package does not yet expose (shared-runtime
-	// closure, pending commander approval -- see the jira sync report); custom
-	// field values are therefore not templated here.
-	fieldsWithStringKeys, err := tcontainer.ConvertToMarshalMap(n.conf.Fields, func(v string) string { return v })
-	if err != nil {
-		return issue{}, fmt.Errorf("convertToMarshalMap: %w", err)
+	fieldsWithStringKeys := make(map[string]any, len(n.conf.Fields))
+	for key, value := range n.conf.Fields {
+		fieldsWithStringKeys[key], err = template.DeepCopyWithTemplate(value, tmplTextFunc)
+		if err != nil {
+			return issue{}, fmt.Errorf("fields template: %w", err)
+		}
 	}
 
 	summary, truncated := notify.TruncateInRunes(summary, maxSummaryLenRunes)
@@ -224,7 +214,7 @@ func (n *Notifier) prepareIssueRequestBody(ctx context.Context, logger *slog.Log
 	return requestBody, nil
 }
 
-func (n *Notifier) searchExistingIssue(ctx context.Context, logger *slog.Logger, groupID string, firing bool, tmplTextFunc templateFunc) (*issue, bool, error) {
+func (n *Notifier) searchExistingIssue(ctx context.Context, logger *slog.Logger, groupID string, firing bool, tmplTextFunc template.TemplateFunc) (*issue, bool, error) {
 	jql := strings.Builder{}
 
 	if n.conf.WontFixResolution != "" {

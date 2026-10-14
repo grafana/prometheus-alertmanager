@@ -378,14 +378,9 @@ func TestJiraTemplating(t *testing.T) {
 					"customfield_14400": `{{ template "jira.host" . }}`,
 				},
 			},
-			retry:            false,
-			expectedFieldKey: "customfield_14400",
-			// Upstream templates each custom field value via
-			// template.DeepCopyWithTemplate; this fork's shared template
-			// package doesn't expose that yet (shared-runtime closure,
-			// pending commander approval -- see the jira sync report), so
-			// custom field values pass through untemplated here.
-			expectedFieldValue: `{{ template "jira.host" . }}`,
+			retry:              false,
+			expectedFieldKey:   "customfield_14400",
+			expectedFieldValue: "host1.example.com",
 		},
 		{
 			title: "template project",
@@ -1247,7 +1242,7 @@ func TestJiraPriority(t *testing.T) {
 			tmpl.ExternalURL = u
 
 			var (
-				data = tmpl.Data("jira", model.LabelSet{}, nil, "unknown", tc.alerts...)
+				data = tmpl.Data("jira", model.LabelSet{}, nil, notify.ReasonFirstNotification.String(), tc.alerts...)
 
 				tmplTextErr  error
 				tmplText     = notify.TmplText(tmpl, data, &tmplTextErr)
