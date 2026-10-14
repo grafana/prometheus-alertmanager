@@ -144,6 +144,7 @@ func TestData(t *testing.T) {
 	for _, tc := range []struct {
 		receiver    string
 		groupLabels model.LabelSet
+		routeLabels model.LabelSet
 		alerts      []*types.Alert
 
 		exp *Data
@@ -151,13 +152,15 @@ func TestData(t *testing.T) {
 		{
 			receiver: "webhook",
 			exp: &Data{
-				Receiver:          "webhook",
-				Status:            "resolved",
-				Alerts:            Alerts{},
-				GroupLabels:       KV{},
-				CommonLabels:      KV{},
-				CommonAnnotations: KV{},
-				ExternalURL:       u.String(),
+				Receiver:           "webhook",
+				Status:             "resolved",
+				Alerts:             Alerts{},
+				NotificationReason: "first notification",
+				GroupLabels:        KV{},
+				CommonLabels:       KV{},
+				CommonAnnotations:  KV{},
+				RouteLabels:        KV{},
+				ExternalURL:        u.String(),
 			},
 		},
 		{
@@ -165,6 +168,7 @@ func TestData(t *testing.T) {
 			groupLabels: model.LabelSet{
 				model.LabelName("job"): model.LabelValue("foo"),
 			},
+			routeLabels: model.LabelSet{"team": "ops"},
 			alerts: []*types.Alert{
 				{
 					Alert: model.Alert{
@@ -214,10 +218,12 @@ func TestData(t *testing.T) {
 						Fingerprint: "3b15fd163d36582e",
 					},
 				},
-				GroupLabels:       KV{"job": "foo"},
-				CommonLabels:      KV{"job": "foo"},
-				CommonAnnotations: KV{"runbook": "foo"},
-				ExternalURL:       u.String(),
+				GroupLabels:        KV{"job": "foo"},
+				CommonLabels:       KV{"job": "foo"},
+				CommonAnnotations:  KV{"runbook": "foo"},
+				RouteLabels:        KV{"team": "ops"},
+				NotificationReason: "first notification",
+				ExternalURL:        u.String(),
 			},
 		},
 		{
@@ -272,16 +278,18 @@ func TestData(t *testing.T) {
 						Fingerprint: "c7e68cb08e3e67f9",
 					},
 				},
-				GroupLabels:       KV{},
-				CommonLabels:      KV{},
-				CommonAnnotations: KV{},
-				ExternalURL:       u.String(),
+				GroupLabels:        KV{},
+				CommonLabels:       KV{},
+				CommonAnnotations:  KV{},
+				RouteLabels:        KV{},
+				NotificationReason: "first notification",
+				ExternalURL:        u.String(),
 			},
 		},
 	} {
 		tc := tc
 		t.Run("", func(t *testing.T) {
-			got := tmpl.Data(tc.receiver, tc.groupLabels, tc.alerts...)
+			got := tmpl.Data(tc.receiver, tc.groupLabels, tc.routeLabels, "first notification", tc.alerts...)
 			require.Equal(t, tc.exp, got)
 		})
 	}
@@ -542,6 +550,101 @@ func TestTemplateFuncs(t *testing.T) {
 				}()
 			}
 			wg.Wait()
+		})
+	}
+}
+
+func TestDeepCopyWithTemplate(t *testing.T) {
+	identity := TemplateFunc(func(s string) (string, error) { return s, nil })
+	withSuffix := TemplateFunc(func(s string) (string, error) { return s + "-templated", nil })
+
+	for _, tc := range []struct {
+		title   string
+		input   any
+		fn      TemplateFunc
+		want    any
+		wantErr string
+	}{
+		{
+			title: "string keeps templated value",
+			input: "hello",
+			fn:    withSuffix,
+			want:  "hello-templated",
+		},
+		{
+			title: "string parsed as YAML map",
+			input: "foo: bar",
+			fn:    identity,
+			want:  map[string]any{"foo": "bar"},
+		},
+		{
+			title: "slice templating applied recursively",
+			input: []any{"foo", 42},
+			fn:    withSuffix,
+			want:  []any{"foo-templated", 42},
+		},
+		{
+			title: "map converts keys and drops non-string",
+			input: map[any]any{
+				"foo":    "bar",
+				42:       "ignore",
+				"nested": []any{"baz"},
+			},
+			fn: withSuffix,
+			want: map[string]any{
+				"foo-templated":    "bar-templated",
+				"nested-templated": []any{"baz-templated"},
+			},
+		},
+		{
+			title: "non string value returned as-is",
+			input: 123,
+			fn:    identity,
+			want:  123,
+		},
+		{
+			title: "nil input",
+			input: nil,
+			fn:    identity,
+			want:  nil,
+		},
+		{
+			// Regression test for #5302: a rendered JSON document must be taken
+			// as-is. String leaves that look like YAML (e.g. ending with a colon)
+			// must not be reinterpreted into maps/scalars.
+			title: "rendered JSON keeps string leaves verbatim",
+			input: `[{"alertname":"test1","id":"value1:"}]`,
+			fn:    identity,
+			want: []any{
+				map[string]any{"alertname": "test1", "id": "value1:"},
+			},
+		},
+		{
+			title: "rendered JSON keeps YAML-like scalar strings as strings",
+			input: `{"num":"123","truthy":"true","empty":"null","when":"2026-01-01"}`,
+			fn:    identity,
+			want: map[string]any{
+				"num":    "123",
+				"truthy": "true",
+				"empty":  "null",
+				"when":   "2026-01-01",
+			},
+		},
+		{
+			title: "rendered JSON preserves real scalar types",
+			input: `{"num":123,"truthy":true,"empty":null}`,
+			fn:    identity,
+			want: map[string]any{
+				"num":    123,
+				"truthy": true,
+				"empty":  nil,
+			},
+		},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			got, err := DeepCopyWithTemplate(tc.input, tc.fn)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
 		})
 	}
 }

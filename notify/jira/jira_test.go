@@ -1247,13 +1247,7 @@ func TestJiraPriority(t *testing.T) {
 			tmpl.ExternalURL = u
 
 			var (
-				// Upstream calls tmpl.Data with routeLabels/notificationReason params
-				// (Template.Data(recv, groupLabels, routeLabels, notificationReason,
-				// alerts...)); this fork's shared template package doesn't have that
-				// signature yet (shared-runtime closure, pending commander approval --
-				// see the jira sync report), so this call uses the fork's current
-				// signature.
-				data = tmpl.Data("jira", model.LabelSet{}, tc.alerts...)
+				data = tmpl.Data("jira", model.LabelSet{}, nil, "unknown", tc.alerts...)
 
 				tmplTextErr  error
 				tmplText     = notify.TmplText(tmpl, data, &tmplTextErr)

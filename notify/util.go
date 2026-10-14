@@ -24,9 +24,11 @@ import (
 	"net/url"
 	"strings"
 
+	commoncfg "github.com/prometheus/common/config"
 	"github.com/prometheus/common/version"
 
 	"github.com/prometheus/alertmanager/template"
+	"github.com/prometheus/alertmanager/tracing"
 	"github.com/prometheus/alertmanager/types"
 )
 
@@ -35,6 +37,18 @@ const truncationMarker = "…"
 
 // UserAgentHeader is the default User-Agent for notification requests.
 var UserAgentHeader = fmt.Sprintf("Alertmanager/%s", version.Version)
+
+// NewClientWithTracing creates a new HTTP client with tracing included
+// Clients are reused across requests, so tracing is configured once at creation
+// rather than on each request.
+func NewClientWithTracing(cfg commoncfg.HTTPClientConfig, name string, httpOpts ...commoncfg.HTTPClientOption) (*http.Client, error) {
+	client, err := commoncfg.NewClientFromConfig(cfg, name, httpOpts...)
+	if err != nil {
+		return nil, err
+	}
+	client.Transport = tracing.Transport(client.Transport)
+	return client, nil
+}
 
 // RedactURL removes the URL part from an error of *url.Error type.
 func RedactURL(err error) error {
@@ -188,7 +202,16 @@ func GetTemplateData(ctx context.Context, tmpl *template.Template, alerts []*typ
 	if !ok {
 		l.Error("Missing group labels")
 	}
-	return tmpl.Data(recv, groupLabels, alerts...)
+	// Route labels are optional (a route may have none, and some callers omit
+	// them); absence is not an error and a nil LabelSet is handled downstream.
+	routeLabels, _ := RouteLabels(ctx)
+	notificationReason, ok := NotificationReason(ctx)
+	if !ok {
+		l.Error("Missing notification reason")
+		notificationReason = ReasonUnknown
+	}
+	data := tmpl.Data(recv, groupLabels, routeLabels, notificationReason.String(), alerts...)
+	return data
 }
 
 func readAll(r io.Reader) string {

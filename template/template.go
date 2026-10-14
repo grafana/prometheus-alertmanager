@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/prometheus/common/model"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"gopkg.in/yaml.v2"
 
 	"github.com/prometheus/alertmanager/asset"
 	"github.com/prometheus/alertmanager/types"
@@ -310,9 +312,12 @@ type Data struct {
 	Status   string `json:"status"`
 	Alerts   Alerts `json:"alerts"`
 
+	NotificationReason string `json:"notification_reason"`
+
 	GroupLabels       KV `json:"groupLabels"`
 	CommonLabels      KV `json:"commonLabels"`
 	CommonAnnotations KV `json:"commonAnnotations"`
+	RouteLabels       KV `json:"routeLabels"`
 
 	ExternalURL string `json:"externalURL"`
 }
@@ -354,20 +359,24 @@ func (as Alerts) Resolved() []Alert {
 }
 
 // Data assembles data for template expansion.
-func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*types.Alert) *Data {
+func (t *Template) Data(recv string, groupLabels, routeLabels model.LabelSet, notificationReason string, alerts ...*types.Alert) *Data {
+	typedAlerts := types.Alerts(alerts...)
+
 	data := &Data{
-		Receiver:          regexp.QuoteMeta(recv),
-		Status:            string(types.Alerts(alerts...).Status()),
-		Alerts:            make(Alerts, 0, len(alerts)),
-		GroupLabels:       KV{},
-		CommonLabels:      KV{},
-		CommonAnnotations: KV{},
-		ExternalURL:       t.ExternalURL.String(),
+		Receiver:           regexp.QuoteMeta(recv),
+		Status:             string(typedAlerts.Status()),
+		Alerts:             make(Alerts, 0, len(alerts)),
+		NotificationReason: notificationReason,
+		GroupLabels:        KV{},
+		CommonLabels:       KV{},
+		CommonAnnotations:  KV{},
+		RouteLabels:        KV{},
+		ExternalURL:        t.ExternalURL.String(),
 	}
 
 	// The call to types.Alert is necessary to correctly resolve the internal
 	// representation to the user representation.
-	for _, a := range types.Alerts(alerts...) {
+	for _, a := range typedAlerts {
 		alert := Alert{
 			Status:       string(a.Status()),
 			Labels:       make(KV, len(a.Labels)),
@@ -388,6 +397,10 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 
 	for k, v := range groupLabels {
 		data.GroupLabels[string(k)] = string(v)
+	}
+
+	for k, v := range routeLabels {
+		data.RouteLabels[string(k)] = string(v)
 	}
 
 	if len(alerts) >= 1 {
@@ -419,6 +432,110 @@ func (t *Template) Data(recv string, groupLabels model.LabelSet, alerts ...*type
 	}
 
 	return data
+}
+
+type TemplateFunc func(string) (string, error)
+
+// DeepCopyWithTemplate returns a deep copy of a map/slice/array/string/int/bool or combination thereof, executing the
+// provided template (with the provided data) on all string keys or values. All maps are connverted to
+// map[string]any, with all non-string keys discarded.
+func DeepCopyWithTemplate(value any, tmplTextFunc TemplateFunc) (any, error) {
+	if value == nil {
+		return value, nil
+	}
+
+	valueMeta := reflect.ValueOf(value)
+	switch valueMeta.Kind() {
+
+	case reflect.String:
+		parsed, ok := tmplTextFunc(value.(string))
+		if ok == nil {
+			var inlineType any
+			err := yaml.Unmarshal([]byte(parsed), &inlineType)
+			if err != nil || (inlineType != nil && reflect.TypeOf(inlineType).Kind() == reflect.String) {
+				// ignore error, thus the string is not an interface
+				return parsed, ok
+			}
+			// inlineType holds structured data decoded from the rendered string.
+			// This is already final data, so only normalize it into JSON-compatible
+			// types. It must not be passed back through DeepCopyWithTemplate, because
+			// re-templating and re-parsing its leaf values would reinterpret strings
+			// that merely look like YAML (e.g. "value1:" becoming a map). See #5302.
+			return normalizeYAMLValue(inlineType), nil
+		}
+		return parsed, ok
+
+	case reflect.Array, reflect.Slice:
+		arrayLen := valueMeta.Len()
+		converted := make([]any, arrayLen)
+		for i := range arrayLen {
+			var err error
+			converted[i], err = DeepCopyWithTemplate(valueMeta.Index(i).Interface(), tmplTextFunc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return converted, nil
+
+	case reflect.Map:
+		keys := valueMeta.MapKeys()
+		converted := make(map[string]any, len(keys))
+
+		for _, keyMeta := range keys {
+			var err error
+			strKey, isString := keyMeta.Interface().(string)
+			if !isString {
+				continue
+			}
+			strKey, err = tmplTextFunc(strKey)
+			if err != nil {
+				return nil, err
+			}
+			converted[strKey], err = DeepCopyWithTemplate(valueMeta.MapIndex(keyMeta).Interface(), tmplTextFunc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return converted, nil
+	default:
+		return value, nil
+	}
+}
+
+// normalizeYAMLValue recursively converts a value decoded by yaml.Unmarshal into
+// JSON-compatible types: maps become map[string]any (non-string keys are dropped,
+// mirroring DeepCopyWithTemplate) and slices/arrays become []any. Scalar leaves are
+// returned unchanged, so values are never re-templated or re-parsed. This keeps a
+// rendered JSON payload byte-for-byte faithful instead of reinterpreting string
+// values that happen to be valid YAML (see #5302).
+func normalizeYAMLValue(value any) any {
+	if value == nil {
+		return nil
+	}
+
+	valueMeta := reflect.ValueOf(value)
+	switch valueMeta.Kind() {
+	case reflect.Array, reflect.Slice:
+		converted := make([]any, valueMeta.Len())
+		for i := range converted {
+			converted[i] = normalizeYAMLValue(valueMeta.Index(i).Interface())
+		}
+		return converted
+
+	case reflect.Map:
+		converted := make(map[string]any, valueMeta.Len())
+		for _, keyMeta := range valueMeta.MapKeys() {
+			strKey, isString := keyMeta.Interface().(string)
+			if !isString {
+				continue
+			}
+			converted[strKey] = normalizeYAMLValue(valueMeta.MapIndex(keyMeta).Interface())
+		}
+		return converted
+
+	default:
+		return value
+	}
 }
 
 // Clone returns a copy of the template.
