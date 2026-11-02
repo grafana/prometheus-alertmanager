@@ -447,7 +447,7 @@ func (pb *PipelineBuilder) New(
 	ss := NewMuteStage(silencer, pb.metrics)
 
 	for name := range receivers {
-		st := createReceiverStage(name, receivers[name], wait, notificationLog, pb.metrics)
+		st := createReceiverStage(name, receivers[name], wait, is, notificationLog, pb.metrics)
 		rs[name] = MultiStage{ms, is, tas, tms, ss, st}
 	}
 
@@ -461,6 +461,7 @@ func createReceiverStage(
 	name string,
 	integrations []*Integration,
 	wait func() time.Duration,
+	inhibitStage Stage,
 	notificationLog NotificationLog,
 	metrics *Metrics,
 ) Stage {
@@ -473,6 +474,8 @@ func createReceiverStage(
 		}
 		var s MultiStage
 		s = append(s, NewWaitStage(wait))
+		// Inhibition may change while waiting.
+		s = append(s, inhibitStage)
 		s = append(s, NewDedupStage(integrations[i], notificationLog, recv))
 		s = append(s, NewRetryStage(integrations[i], name, metrics))
 		s = append(s, NewSetNotifiesStage(notificationLog, recv))

@@ -863,6 +863,33 @@ func TestMuteStage(t *testing.T) {
 	}
 }
 
+func TestReceiverStageRechecksInhibitionAfterWait(t *testing.T) {
+	inhibited := false
+	muter := types.MuteFunc(func(model.LabelSet) bool { return inhibited })
+	metrics := NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{})
+
+	sent := false
+	notifier := notifierFunc(func(context.Context, ...*types.Alert) (bool, error) {
+		sent = true
+		return false, nil
+	})
+	integrations := []*Integration{NewIntegration(notifier, sendResolved(true), "test", 0, "recv")}
+	// The inhibition starts while the stage is waiting.
+	wait := func() time.Duration {
+		inhibited = true
+		return 0
+	}
+	nflog := &testNflog{logFunc: func(*nflogpb.Receiver, string, []uint64, []uint64, time.Duration) error { return nil }}
+	stage := createReceiverStage("recv", integrations, wait, NewMuteStage(muter, metrics), nflog, metrics)
+
+	alert := &types.Alert{Alert: model.Alert{Labels: model.LabelSet{"a": "b"}}}
+	ctx := WithNow(WithRepeatInterval(WithGroupKey(context.Background(), "group"), time.Hour), time.Now())
+	_, _, err := stage.Exec(ctx, promslog.NewNopLogger(), alert)
+	require.NoError(t, err)
+	require.False(t, sent)
+	require.Equal(t, 1, int(prom_testutil.ToFloat64(metrics.numNotificationSuppressedTotal.WithLabelValues(""))))
+}
+
 func TestMuteStageWithSilences(t *testing.T) {
 	silences, err := silence.New(silence.Options{Retention: time.Hour})
 	if err != nil {
