@@ -63,7 +63,12 @@ type testNflog struct {
 	qres []*nflogpb.Entry
 	qerr error
 
-	logFunc func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	logFunc     func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	refreshFunc func(r *nflogpb.Receiver, gkey string, now time.Time, minRemaining, expiry time.Duration) (bool, error)
+}
+
+func (l *testNflog) RefreshExpiry(r *nflogpb.Receiver, gkey string, now time.Time, minRemaining, expiry time.Duration) (bool, error) {
+	return l.refreshFunc(r, gkey, now, minRemaining, expiry)
 }
 
 func (l *testNflog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
@@ -1181,13 +1186,17 @@ func BenchmarkHashAlert(b *testing.B) {
 	}
 }
 
-// failingNflog fails the test on any call that writes the log.
+// failingNflog fails the test on any call that writes or refreshes the log.
 func failingNflog(t *testing.T) *testNflog {
 	t.Helper()
 	return &testNflog{
 		logFunc: func(*nflogpb.Receiver, string, []uint64, []uint64, time.Duration) error {
 			t.Error("unexpected call to Log")
 			return nil
+		},
+		refreshFunc: func(*nflogpb.Receiver, string, time.Time, time.Duration, time.Duration) (bool, error) {
+			t.Error("unexpected call to RefreshExpiry")
+			return false, nil
 		},
 	}
 }
@@ -1268,4 +1277,139 @@ type failPeer struct{ t *testing.T }
 func (p failPeer) WaitReady(context.Context) error {
 	p.t.Error("unexpected call to WaitReady")
 	return nil
+}
+
+func TestBranchStage(t *testing.T) {
+	type key struct{}
+	in := []*types.Alert{{}, {}}
+	var called string
+	branch := func(name string) Stage {
+		return StageFunc(func(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+			called = name
+			require.Equal(t, in, alerts)
+			return context.WithValue(ctx, key{}, name), []*types.Alert{{}}, errors.New(name)
+		})
+	}
+	for _, b := range []Branch{BranchLeft, BranchRight} {
+		expected := "right"
+		if b == BranchLeft {
+			expected = "left"
+		}
+		stage := NewBranchStage(func(context.Context, *slog.Logger, ...*types.Alert) Branch { return b }, branch("left"), branch("right"))
+		called = ""
+		ctx, res, err := stage.Exec(context.Background(), promslog.NewNopLogger(), in...)
+		require.EqualError(t, err, expected)
+		require.Equal(t, expected, called)
+		require.Equal(t, expected, ctx.Value(key{}))
+		require.Len(t, res, 1)
+	}
+}
+
+func TestRefreshExpiryStage(t *testing.T) {
+	recv := &nflogpb.Receiver{GroupName: "test"}
+	now := utcNow()
+
+	base := WithNow(WithGroupInterval(WithRepeatInterval(WithGroupKey(context.Background(), "1"), time.Hour), time.Minute), now)
+
+	t.Run("missing context values", func(t *testing.T) {
+		s := NewRefreshExpiryStage(failingNflog(t), recv)
+		ctx := context.Background()
+		_, _, err := s.Exec(ctx, promslog.NewNopLogger())
+		require.EqualError(t, err, "group key missing")
+		ctx = WithGroupKey(ctx, "1")
+		_, _, err = s.Exec(ctx, promslog.NewNopLogger())
+		require.EqualError(t, err, "repeat interval missing")
+		ctx = WithRepeatInterval(ctx, time.Hour)
+		_, _, err = s.Exec(ctx, promslog.NewNopLogger())
+		require.EqualError(t, err, "group interval missing")
+		ctx = WithGroupInterval(ctx, time.Minute)
+		_, _, err = s.Exec(ctx, promslog.NewNopLogger())
+		require.EqualError(t, err, "missing now timestamp")
+	})
+
+	cases := []struct {
+		name           string
+		repeat, group  time.Duration
+		expectedExpiry time.Duration
+	}{
+		{"twice the repeat interval", time.Hour, time.Minute, 2 * time.Hour},
+		{"twice the group interval if it is larger", time.Minute, time.Hour, 2 * time.Hour},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var calls int
+			tnflog := &testNflog{refreshFunc: func(r *nflogpb.Receiver, gkey string, n time.Time, minRemaining, expiry time.Duration) (bool, error) {
+				calls++
+				require.Equal(t, recv, r)
+				require.Equal(t, "1", gkey)
+				require.Equal(t, now, n)
+				require.Equal(t, 2*c.group, minRemaining)
+				require.Equal(t, c.expectedExpiry, expiry)
+				return true, nil
+			}}
+			ctx := WithGroupInterval(WithRepeatInterval(base, c.repeat), c.group)
+			s := NewRefreshExpiryStage(tnflog, recv)
+			_, res, err := s.Exec(ctx, promslog.NewNopLogger())
+			require.NoError(t, err)
+			require.Nil(t, res)
+			require.Equal(t, 1, calls)
+		})
+	}
+
+	t.Run("error is returned", func(t *testing.T) {
+		tnflog := &testNflog{refreshFunc: func(*nflogpb.Receiver, string, time.Time, time.Duration, time.Duration) (bool, error) {
+			return false, errors.New("boom")
+		}}
+		_, res, err := NewRefreshExpiryStage(tnflog, recv).Exec(base, promslog.NewNopLogger())
+		require.EqualError(t, err, "boom")
+		require.Nil(t, res)
+	})
+}
+
+func TestReceiverStageRefreshesExpiryWhenDedupSuppresses(t *testing.T) {
+	now := utcNow()
+	alert := &types.Alert{Alert: model.Alert{Labels: model.LabelSet{"alertname": "a"}}}
+	ctx := WithNow(WithGroupInterval(WithRepeatInterval(WithGroupKey(context.Background(), "1"), time.Hour), time.Minute), now)
+
+	var notified, logged, refreshed int
+	newStage := func(entry *nflogpb.Entry) Stage {
+		tnflog := &testNflog{
+			qres: []*nflogpb.Entry{entry},
+			logFunc: func(*nflogpb.Receiver, string, []uint64, []uint64, time.Duration) error {
+				logged++
+				return nil
+			},
+			refreshFunc: func(*nflogpb.Receiver, string, time.Time, time.Duration, time.Duration) (bool, error) {
+				refreshed++
+				return true, nil
+			},
+		}
+		if entry == nil {
+			tnflog.qres = nil
+			tnflog.qerr = nflog.ErrNotFound
+		}
+		integration := NewIntegration(notifierFunc(func(context.Context, ...*types.Alert) (bool, error) {
+			notified++
+			return false, nil
+		}), sendResolved(false), "test", 0, "recv")
+		metrics := NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{})
+		return createReceiverStage("recv", []*Integration{integration}, func() time.Duration { return 0 }, tnflog, metrics)
+	}
+
+	// Nothing changed and the repeat interval has not elapsed: only the expiry is refreshed.
+	stage := newStage(&nflogpb.Entry{FiringAlerts: []uint64{hashAlert(alert)}, Timestamp: now.Add(-time.Minute)})
+	_, _, err := stage.Exec(ctx, promslog.NewNopLogger(), alert)
+	require.NoError(t, err)
+	require.Equal(t, 1, refreshed)
+	require.Zero(t, logged)
+	require.Zero(t, notified)
+
+	// No entry: the group is notified and the log is written, the expiry is not refreshed.
+	refreshed = 0
+	stage = newStage(nil)
+	_, _, err = stage.Exec(ctx, promslog.NewNopLogger(), alert)
+	require.NoError(t, err)
+	require.Zero(t, refreshed)
+	require.Equal(t, 1, logged)
+	require.Equal(t, 1, notified)
 }
