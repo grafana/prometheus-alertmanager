@@ -293,6 +293,8 @@ func (f StageFunc) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Al
 
 type NotificationLog interface {
 	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	// RefreshExpiry extends the expiration of the existing entry without changing it. See nflog.Log.RefreshExpiry.
+	RefreshExpiry(r *nflogpb.Receiver, gkey string, now time.Time, minRemaining, expiry time.Duration) (bool, error)
 	Query(params ...nflog.QueryParam) ([]*nflogpb.Entry, error)
 }
 
@@ -474,12 +476,25 @@ func createReceiverStage(
 		var s MultiStage
 		s = append(s, NewWaitStage(wait))
 		s = append(s, NewDedupStage(integrations[i], notificationLog, recv))
-		s = append(s, NewRetryStage(integrations[i], name, metrics))
-		s = append(s, NewSetNotifiesStage(notificationLog, recv))
+		// When the DedupStage suppressed the flush, no alerts are left. Keep the
+		// notification log entry alive instead of notifying.
+		s = append(s, NewBranchStage(
+			noAlerts,
+			NewRefreshExpiryStage(notificationLog, recv),
+			MultiStage{
+				NewRetryStage(integrations[i], name, metrics),
+				NewSetNotifiesStage(notificationLog, recv),
+			},
+		))
 
 		fs = append(fs, s)
 	}
 	return fs
+}
+
+// noAlerts is a BranchStage predicate that selects the left branch if there are no alerts.
+func noAlerts(_ context.Context, _ *slog.Logger, alerts ...*types.Alert) Branch {
+	return len(alerts) == 0
 }
 
 // RoutingStage executes the inner stages based on the receiver specified in
@@ -510,7 +525,8 @@ func (ms MultiStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.
 	var err error
 	for _, s := range ms {
 		// Stages are executed even when there are no alerts: each stage is
-		// responsible for bypassing itself.
+		// responsible for bypassing itself, which lets a BranchStage act on
+		// the empty result of a previous stage.
 		ctx, alerts, err = s.Exec(ctx, l, alerts...)
 		if err != nil {
 			return ctx, nil, err
@@ -1055,16 +1071,71 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*t
 		return ctx, nil, errors.New("repeat interval missing")
 	}
 
-	// The nflog entry must outlive the group's flush cadence, not just the repeat cycle.
-	// A resolved notification can only be emitted at a flush (group_interval) and needs the firing entry to still be present.
-	// With only 2*repeat, a group_interval larger than 2*repeat_interval lets the entry be swept before the resolve is flushed,
-	// silently dropping the resolved notification.
+	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, nflogExpiry(ctx, repeat))
+}
+
+// nflogExpiry returns the expiry to request for a notification log entry.
+//
+// The nflog entry must outlive the group's flush cadence, not just the repeat cycle.
+// A resolved notification can only be emitted at a flush (group_interval) and needs the firing entry to still be present.
+// With only 2*repeat, a group_interval larger than 2*repeat_interval lets the entry be swept before the resolve is flushed,
+// silently dropping the resolved notification.
+func nflogExpiry(ctx context.Context, repeat time.Duration) time.Duration {
 	expiry := 2 * repeat
 	if groupInterval, ok := GroupInterval(ctx); ok && groupInterval > repeat {
 		expiry = 2 * groupInterval
 	}
+	return expiry
+}
 
-	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry)
+// RefreshExpiryStage extends the expiration of the notification log entry of
+// a group whose flush has been suppressed by the DedupStage. Otherwise the
+// entry could expire before the repeat interval elapsed (the log caps the
+// expiry at its retention) and the group would be notified again too early.
+//
+// The entry itself (timestamp, alerts) is not changed, only its expiration,
+// and only if it is about to expire in less than two group intervals.
+type RefreshExpiryStage struct {
+	nflog NotificationLog
+	recv  *nflogpb.Receiver
+}
+
+// NewRefreshExpiryStage returns a new instance of a RefreshExpiryStage.
+func NewRefreshExpiryStage(l NotificationLog, recv *nflogpb.Receiver) *RefreshExpiryStage {
+	return &RefreshExpiryStage{nflog: l, recv: recv}
+}
+
+// Exec implements the Stage interface. It always returns no alerts.
+func (n RefreshExpiryStage) Exec(ctx context.Context, l *slog.Logger, _ ...*types.Alert) (context.Context, []*types.Alert, error) {
+	gkey, ok := GroupKey(ctx)
+	if !ok {
+		return ctx, nil, errors.New("group key missing")
+	}
+
+	repeat, ok := RepeatInterval(ctx)
+	if !ok {
+		return ctx, nil, errors.New("repeat interval missing")
+	}
+
+	groupInterval, ok := GroupInterval(ctx)
+	if !ok {
+		return ctx, nil, errors.New("group interval missing")
+	}
+
+	// The pipeline time is the same on all cluster peers, which keeps the result deterministic.
+	now, ok := Now(ctx)
+	if !ok {
+		return ctx, nil, errors.New("missing now timestamp")
+	}
+
+	refreshed, err := n.nflog.RefreshExpiry(n.recv, gkey, now, 2*groupInterval, nflogExpiry(ctx, repeat))
+	if err != nil {
+		return ctx, nil, err
+	}
+	if refreshed {
+		l.Debug("Extended expiration of notification log entry", "aggrGroup", gkey, "receiver", n.recv.GroupName, "integration", n.recv.Integration)
+	}
+	return ctx, nil, nil
 }
 
 type timeStage struct {
@@ -1152,4 +1223,34 @@ func (tas TimeActiveStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*
 	}
 
 	return ctx, alerts, nil
+}
+
+// Branch is the result of the predicate of a BranchStage.
+type Branch bool
+
+const (
+	// BranchLeft selects the left stage of a BranchStage.
+	BranchLeft Branch = true
+	// BranchRight selects the right stage of a BranchStage.
+	BranchRight Branch = false
+)
+
+// BranchStage executes one of two stages depending on the result of a predicate.
+type BranchStage struct {
+	predicate   func(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) Branch
+	leftBranch  Stage
+	rightBranch Stage
+}
+
+// NewBranchStage returns a BranchStage that executes left if the predicate returns BranchLeft and right otherwise.
+func NewBranchStage(predicate func(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) Branch, left, right Stage) *BranchStage {
+	return &BranchStage{predicate: predicate, leftBranch: left, rightBranch: right}
+}
+
+// Exec implements the Stage interface.
+func (b BranchStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if b.predicate(ctx, l, alerts...) == BranchLeft {
+		return b.leftBranch.Exec(ctx, l, alerts...)
+	}
+	return b.rightBranch.Exec(ctx, l, alerts...)
 }

@@ -464,3 +464,171 @@ func TestStateDecodingError(t *testing.T) {
 func gosched() {
 	time.Sleep(1 * time.Millisecond)
 }
+
+func TestLogRefreshExpiry(t *testing.T) {
+	rcv := &pb.Receiver{GroupName: "g", Integration: "test", Idx: 1}
+	const (
+		gkey      = "group"
+		retention = time.Hour
+	)
+
+	newLog := func(clk clock.Clock) (*Log, *atomic.Int32) {
+		var broadcasts atomic.Int32
+		return &Log{
+			clock:              clk,
+			retention:          retention,
+			st:                 state{},
+			metrics:            newMetrics(nil),
+			broadcast:          func([]byte) { broadcasts.Inc() },
+			isReliableDelivery: func([]byte) bool { return true },
+		}, &broadcasts
+	}
+	expiresAt := func(l *Log) time.Time {
+		l.mtx.RLock()
+		defer l.mtx.RUnlock()
+		return l.st[stateKey(gkey, rcv)].ExpiresAt
+	}
+
+	t.Run("missing entry is not created", func(t *testing.T) {
+		l, broadcasts := newLog(clock.NewMock())
+		ok, err := l.RefreshExpiry(rcv, gkey, l.now(), time.Minute, time.Hour)
+		require.NoError(t, err)
+		require.False(t, ok)
+		require.Empty(t, l.st)
+		require.Zero(t, broadcasts.Load())
+	})
+
+	t.Run("entry with enough remaining time is untouched", func(t *testing.T) {
+		mockClock := clock.NewMock()
+		l, _ := newLog(mockClock)
+		require.NoError(t, l.Log(rcv, gkey, []uint64{1}, nil, 30*time.Minute))
+		before := expiresAt(l)
+
+		mockClock.Add(time.Minute)
+		ok, err := l.RefreshExpiry(rcv, gkey, mockClock.Now(), 10*time.Minute, 30*time.Minute)
+		require.NoError(t, err)
+		require.False(t, ok)
+		require.Equal(t, before, expiresAt(l))
+	})
+
+	t.Run("entry close to expiry is extended and otherwise unchanged", func(t *testing.T) {
+		mockClock := clock.NewMock()
+		l, broadcasts := newLog(mockClock)
+		require.NoError(t, l.Log(rcv, gkey, []uint64{1, 2}, []uint64{3}, 10*time.Minute))
+		entries, err := l.Query(QReceiver(rcv), QGroupKey(gkey))
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		original := entries[0]
+		broadcastsBefore := broadcasts.Load()
+
+		mockClock.Add(8 * time.Minute)
+		now := mockClock.Now()
+		ok, err := l.RefreshExpiry(rcv, gkey, now, 5*time.Minute, 10*time.Minute)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, now.Add(10*time.Minute), expiresAt(l))
+
+		entries, err = l.Query(QReceiver(rcv), QGroupKey(gkey))
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		require.Equal(t, original, entries[0])
+		require.Equal(t, []uint64{1, 2}, entries[0].FiringAlerts)
+		require.Equal(t, []uint64{3}, entries[0].ResolvedAlerts)
+		require.Equal(t, broadcastsBefore, broadcasts.Load(), "refresh must not be broadcast")
+	})
+
+	t.Run("expiry is capped by retention", func(t *testing.T) {
+		mockClock := clock.NewMock()
+		l, _ := newLog(mockClock)
+		require.NoError(t, l.Log(rcv, gkey, []uint64{1}, nil, time.Minute))
+
+		mockClock.Add(30 * time.Second)
+		now := mockClock.Now()
+		ok, err := l.RefreshExpiry(rcv, gkey, now, time.Hour, 100*time.Hour)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, now.Add(retention), expiresAt(l))
+	})
+
+	t.Run("expiry is never shortened", func(t *testing.T) {
+		mockClock := clock.NewMock()
+		l, _ := newLog(mockClock)
+		require.NoError(t, l.Log(rcv, gkey, []uint64{1}, nil, 30*time.Minute))
+		before := expiresAt(l)
+
+		ok, err := l.RefreshExpiry(rcv, gkey, mockClock.Now(), time.Hour, time.Minute)
+		require.NoError(t, err)
+		require.False(t, ok)
+		require.Equal(t, before, expiresAt(l))
+	})
+
+	t.Run("result depends on the passed time and not on the local clock", func(t *testing.T) {
+		now := clock.NewMock().Now()
+		var results []time.Time
+		for _, skew := range []time.Duration{0, 3 * time.Second, -2 * time.Second} {
+			mockClock := clock.NewMock()
+			l, _ := newLog(mockClock)
+			require.NoError(t, l.Log(rcv, gkey, []uint64{1}, nil, 10*time.Minute))
+			mockClock.Add(5*time.Minute + skew)
+
+			ok, err := l.RefreshExpiry(rcv, gkey, now.Add(5*time.Minute), 10*time.Minute, 10*time.Minute)
+			require.NoError(t, err)
+			require.True(t, ok)
+			results = append(results, expiresAt(l))
+		}
+		require.Equal(t, results[0], results[1])
+		require.Equal(t, results[0], results[2])
+	})
+
+	t.Run("entry survives GC when refreshed on every flush", func(t *testing.T) {
+		const (
+			groupInterval  = time.Minute
+			repeatInterval = 3 * time.Hour // longer than retention
+		)
+		expiry := 2 * repeatInterval
+
+		run := func(refresh bool) int {
+			mockClock := clock.NewMock()
+			l, _ := newLog(mockClock)
+			require.NoError(t, l.Log(rcv, gkey, []uint64{1}, nil, expiry))
+			for i := 0; i < 180; i++ {
+				mockClock.Add(groupInterval)
+				if refresh {
+					_, err := l.RefreshExpiry(rcv, gkey, mockClock.Now(), 2*groupInterval, expiry)
+					require.NoError(t, err)
+				}
+				_, err := l.GC()
+				require.NoError(t, err)
+			}
+			return len(l.st)
+		}
+		require.Equal(t, 0, run(false), "without refresh the entry must expire")
+		require.Equal(t, 1, run(true), "with refresh the entry must stay")
+	})
+
+	t.Run("merge of a newer peer entry replaces the refreshed one", func(t *testing.T) {
+		mockClock := clock.NewMock()
+		l, _ := newLog(mockClock)
+		require.NoError(t, l.Log(rcv, gkey, []uint64{1}, nil, 10*time.Minute))
+		mockClock.Add(9 * time.Minute)
+		_, err := l.RefreshExpiry(rcv, gkey, mockClock.Now(), 5*time.Minute, 10*time.Minute)
+		require.NoError(t, err)
+
+		peerEntry := &pb.MeshEntry{
+			Entry: &pb.Entry{
+				Receiver:     rcv,
+				GroupKey:     []byte(gkey),
+				Timestamp:    mockClock.Now().Add(time.Second),
+				FiringAlerts: []uint64{7},
+			},
+			ExpiresAt: mockClock.Now().Add(time.Hour),
+		}
+		b, err := marshalMeshEntry(peerEntry)
+		require.NoError(t, err)
+		require.NoError(t, l.Merge(b))
+
+		entries, err := l.Query(QReceiver(rcv), QGroupKey(gkey))
+		require.NoError(t, err)
+		require.Equal(t, []uint64{7}, entries[0].FiringAlerts)
+	})
+}
