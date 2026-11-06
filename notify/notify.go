@@ -501,17 +501,16 @@ func (rs RoutingStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*type
 	return s.Exec(ctx, l, alerts...)
 }
 
-// A MultiStage executes a series of stages sequentially.
+// A MultiStage executes a series of stages sequentially. It does not stop when
+// a stage returns no alerts; every stage must handle (usually bypass) empty input.
 type MultiStage []Stage
 
 // Exec implements the Stage interface.
 func (ms MultiStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
 	var err error
 	for _, s := range ms {
-		if len(alerts) == 0 {
-			return ctx, nil, nil
-		}
-
+		// Stages are executed even when there are no alerts: each stage is
+		// responsible for bypassing itself.
 		ctx, alerts, err = s.Exec(ctx, l, alerts...)
 		if err != nil {
 			return ctx, nil, err
@@ -559,6 +558,9 @@ func NewGossipSettleStage(p Peer) *GossipSettleStage {
 }
 
 func (n *GossipSettleStage) Exec(ctx context.Context, _ *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	if n.peer != nil {
 		if err := n.peer.WaitReady(ctx); err != nil {
 			return ctx, nil, err
@@ -587,6 +589,9 @@ func NewMuteStage(m types.Muter, metrics *Metrics) *MuteStage {
 
 // Exec implements the Stage interface.
 func (n *MuteStage) Exec(ctx context.Context, logger *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	var (
 		filtered []*types.Alert
 		muted    []*types.Alert
@@ -633,6 +638,9 @@ func NewWaitStage(wait func() time.Duration) *WaitStage {
 
 // Exec implements the Stage interface.
 func (ws *WaitStage) Exec(ctx context.Context, _ *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	select {
 	case <-time.After(ws.wait()):
 	case <-ctx.Done():
@@ -765,6 +773,9 @@ func (n *DedupStage) needsUpdate(entry *nflogpb.Entry, firing, resolved map[uint
 
 // Exec implements the Stage interface.
 func (n *DedupStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	gkey, ok := GroupKey(ctx)
 	if !ok {
 		return ctx, nil, errors.New("group key missing")
@@ -877,6 +888,9 @@ func NewRetryStage(i *Integration, groupName string, metrics *Metrics) *RetrySta
 }
 
 func (r RetryStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	r.metrics.numNotifications.WithLabelValues(r.labelValues...).Inc()
 	ctx, alerts, err := r.exec(ctx, l, alerts...)
 
@@ -1018,6 +1032,9 @@ func NewSetNotifiesStage(l NotificationLog, recv *nflogpb.Receiver) *SetNotifies
 
 // Exec implements the Stage interface.
 func (n SetNotifiesStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	gkey, ok := GroupKey(ctx)
 	if !ok {
 		return ctx, nil, errors.New("group key missing")
@@ -1064,6 +1081,9 @@ func NewTimeMuteStage(m types.TimeMuter, metrics *Metrics) *TimeMuteStage {
 // Exec implements the stage interface for TimeMuteStage.
 // TimeMuteStage is responsible for muting alerts whose route is not in an active time.
 func (tms TimeMuteStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	muteTimeIntervalNames, ok := MuteTimeIntervalNames(ctx)
 	if !ok {
 		return ctx, alerts, nil
@@ -1101,6 +1121,9 @@ func NewTimeActiveStage(m types.TimeMuter, metrics *Metrics) *TimeActiveStage {
 // Exec implements the stage interface for TimeActiveStage.
 // TimeActiveStage is responsible for muting alerts whose route is not in an active time.
 func (tas TimeActiveStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	if len(alerts) == 0 {
+		return ctx, alerts, nil
+	}
 	activeTimeIntervalNames, ok := ActiveTimeIntervalNames(ctx)
 	if !ok {
 		return ctx, alerts, nil

@@ -249,12 +249,12 @@ func TestDedupStage(t *testing.T) {
 
 	ctx := WithNow(context.Background(), now)
 
-	_, _, err := s.Exec(ctx, promslog.NewNopLogger())
+	_, _, err := s.Exec(ctx, promslog.NewNopLogger(), &types.Alert{})
 	require.EqualError(t, err, "group key missing")
 
 	ctx = WithGroupKey(ctx, "1")
 
-	_, _, err = s.Exec(ctx, promslog.NewNopLogger())
+	_, _, err = s.Exec(ctx, promslog.NewNopLogger(), &types.Alert{})
 	require.EqualError(t, err, "repeat interval missing")
 
 	ctx = WithRepeatInterval(ctx, time.Hour)
@@ -1179,4 +1179,93 @@ func BenchmarkHashAlert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		hashAlert(alert)
 	}
+}
+
+// failingNflog fails the test on any call that writes the log.
+func failingNflog(t *testing.T) *testNflog {
+	t.Helper()
+	return &testNflog{
+		logFunc: func(*nflogpb.Receiver, string, []uint64, []uint64, time.Duration) error {
+			t.Error("unexpected call to Log")
+			return nil
+		},
+	}
+}
+
+func TestMultiStageContinuesWithoutAlerts(t *testing.T) {
+	var calls []string
+	stage := MultiStage{
+		StageFunc(func(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+			calls = append(calls, "first")
+			return ctx, nil, nil
+		}),
+		StageFunc(func(ctx context.Context, l *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+			calls = append(calls, "second")
+			require.Empty(t, alerts)
+			return ctx, nil, nil
+		}),
+	}
+	_, alerts, err := stage.Exec(context.Background(), promslog.NewNopLogger(), &types.Alert{})
+	require.NoError(t, err)
+	require.Nil(t, alerts)
+	require.Equal(t, []string{"first", "second"}, calls)
+}
+
+func TestStagesBypassWithoutAlerts(t *testing.T) {
+	metrics := NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{})
+	failMuter := types.MuteFunc(func(model.LabelSet) bool {
+		t.Error("unexpected call to muter")
+		return false
+	})
+	failTimeMuter := fakeTimeMuter{fn: func([]string, time.Time) (bool, error) {
+		t.Error("unexpected call to time muter")
+		return false, nil
+	}}
+	recv := &nflogpb.Receiver{GroupName: "test"}
+	integration := &Integration{
+		notifier: notifierFunc(func(context.Context, ...*types.Alert) (bool, error) {
+			t.Error("unexpected call to notifier")
+			return false, nil
+		}),
+		rs: sendResolved(true),
+	}
+
+	// A context without any pipeline values: a stage that does not bypass would fail on it.
+	ctx := context.Background()
+	stages := map[string]Stage{
+		"gossip settle": NewGossipSettleStage(failPeer{t}),
+		"mute":          NewMuteStage(failMuter, metrics),
+		"time mute":     NewTimeMuteStage(failTimeMuter, metrics),
+		"time active":   NewTimeActiveStage(failTimeMuter, metrics),
+		"wait": NewWaitStage(func() time.Duration {
+			t.Error("unexpected call to wait")
+			return 0
+		}),
+		"dedup":        NewDedupStage(integration, failingNflog(t), recv),
+		"retry":        NewRetryStage(integration, "test", metrics),
+		"set notifies": NewSetNotifiesStage(failingNflog(t), recv),
+	}
+	for name, stage := range stages {
+		t.Run(name, func(t *testing.T) {
+			for _, in := range [][]*types.Alert{nil, {}} {
+				resctx, res, err := stage.Exec(ctx, promslog.NewNopLogger(), in...)
+				require.NoError(t, err)
+				require.Empty(t, res)
+				require.Equal(t, ctx, resctx)
+			}
+		})
+	}
+}
+
+type fakeTimeMuter struct {
+	fn func(names []string, now time.Time) (bool, error)
+}
+
+func (f fakeTimeMuter) Mutes(names []string, now time.Time) (bool, error) { return f.fn(names, now) }
+
+type failPeer struct{ t *testing.T }
+
+func (p failPeer) WaitReady(context.Context) error {
+	p.t.Error("unexpected call to WaitReady")
+	return nil
 }
