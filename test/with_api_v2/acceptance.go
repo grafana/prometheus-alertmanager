@@ -54,8 +54,10 @@ type AcceptanceTest struct {
 type AcceptanceOpts struct {
 	FeatureFlags []string
 	RoutePrefix  string
-	Tolerance    time.Duration
-	baseTime     time.Time
+	// ExtraArgs are additional command line arguments passed to every Alertmanager.
+	ExtraArgs []string
+	Tolerance time.Duration
+	baseTime  time.Time
 }
 
 func (opts *AcceptanceOpts) alertString(a *models.GettableAlert) string {
@@ -308,6 +310,7 @@ func (am *Alertmanager) Start(additionalArg []string) error {
 	if am.opts.RoutePrefix != "" {
 		args = append(args, "--web.route-prefix", am.opts.RoutePrefix)
 	}
+	args = append(args, am.opts.ExtraArgs...)
 	args = append(args, additionalArg...)
 
 	cmd := exec.Command("../../../alertmanager", args...)

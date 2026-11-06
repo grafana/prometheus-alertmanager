@@ -164,6 +164,55 @@ receivers:
 	t.Log(co.Check())
 }
 
+// TestRepeatIntervalLongerThanRetention checks that a group whose alerts do not
+// change is notified once per repeat_interval even if the repeat_interval is
+// longer than the retention of the notification log. The entry of the log
+// expires after the retention, unless it is refreshed by the flushes that are
+// suppressed by deduplication.
+func TestRepeatIntervalLongerThanRetention(t *testing.T) {
+	t.Parallel()
+
+	conf := `
+route:
+  receiver: "default"
+  group_by: [alertname]
+  group_wait:      1s
+  group_interval:  1s
+  repeat_interval: 8s
+
+receivers:
+- name: "default"
+  webhook_configs:
+  - url: 'http://%s'
+`
+
+	at := NewAcceptanceTest(t, &AcceptanceOpts{
+		Tolerance: 150 * time.Millisecond,
+		// The notification log entry expires after 3s and is garbage
+		// collected every second, long before the repeat interval of 8s.
+		ExtraArgs: []string{"--data.retention", "3s", "--data.maintenance-interval", "1s"},
+	})
+
+	co := at.Collector("webhook")
+	wh := NewWebhook(t, co)
+
+	am := at.AlertmanagerCluster(fmt.Sprintf(conf, wh.Address()), 1)
+
+	am.Push(At(1), Alert("alertname", "test").Active(1))
+
+	// The first notification is sent when the group is flushed for the first time.
+	co.Want(Between(2, 2.5), Alert("alertname", "test").Active(1))
+	// Nothing is sent until the repeat interval has elapsed. Without refreshing
+	// the log entry it expires after 3s and the alert is sent again at around 6s.
+	co.Want(Between(3, 9.5))
+	// The alert is repeated once the repeat interval has elapsed.
+	co.Want(Between(10, 11.5), Alert("alertname", "test").Active(1))
+
+	at.Run()
+
+	t.Log(co.Check())
+}
+
 func TestRetry(t *testing.T) {
 	t.Parallel()
 
