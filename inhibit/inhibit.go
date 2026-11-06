@@ -122,6 +122,11 @@ func (ih *Inhibitor) Stop() {
 	}
 }
 
+// HasRules returns true iff at least one inhibit rule is configured.
+func (ih *Inhibitor) HasRules() bool {
+	return ih != nil && len(ih.rules) > 0
+}
+
 // Mutes returns true iff the given label set is muted. It implements the Muter
 // interface.
 func (ih *Inhibitor) Mutes(lset model.LabelSet) bool {
