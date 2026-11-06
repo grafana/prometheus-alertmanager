@@ -100,6 +100,11 @@ type Dispatcher struct {
 	logger *slog.Logger
 
 	timerFactory TimerFactory
+
+	firstFlushDelay time.Duration
+	startupWindow   time.Duration
+	hasInhibitRules func() bool
+	startedAt       time.Time
 }
 
 // Limits describes limits used by Dispatcher.
@@ -108,6 +113,19 @@ type Limits interface {
 	// 0 or negative value = unlimited.
 	// If dispatcher hits this limit, it will not create additional groups, but will log an error instead.
 	MaxNumberOfAggregationGroups() int
+}
+
+// DispatcherOption configures optional Dispatcher behavior.
+type DispatcherOption func(*Dispatcher)
+
+// WithFirstFlushDelay adds delay on top of group_wait to the first flush of groups created
+// within window of the dispatcher starting. Window <= 0 disables it.
+func WithFirstFlushDelay(delay, window time.Duration, hasInhibitRules func() bool) DispatcherOption {
+	return func(d *Dispatcher) {
+		d.firstFlushDelay = delay
+		d.startupWindow = window
+		d.hasInhibitRules = hasInhibitRules
+	}
 }
 
 // NewDispatcher returns a new Dispatcher.
@@ -121,6 +139,7 @@ func NewDispatcher(
 	l *slog.Logger,
 	m *DispatcherMetrics,
 	timerFactory TimerFactory,
+	opts ...DispatcherOption,
 ) *Dispatcher {
 	if lim == nil {
 		lim = nilLimits{}
@@ -141,6 +160,9 @@ func NewDispatcher(
 		limits:       lim,
 		timerFactory: timerFactory,
 	}
+	for _, opt := range opts {
+		opt(disp)
+	}
 	return disp
 }
 
@@ -153,6 +175,7 @@ func (d *Dispatcher) Run() {
 	d.aggrGroupsNum = 0
 	d.metrics.aggrGroups.Set(0)
 	d.ctx, d.cancel = context.WithCancel(context.Background())
+	d.startedAt = time.Now()
 	d.mtx.Unlock()
 
 	d.run(d.alerts.Subscribe())
@@ -335,6 +358,14 @@ func (d *Dispatcher) Stop() {
 	<-d.done
 }
 
+// extraFirstFlushDelay returns the extra delay for the first flush of a new group.
+func (d *Dispatcher) extraFirstFlushDelay() time.Duration {
+	if d.firstFlushDelay <= 0 || !time.Now().Before(d.startedAt.Add(d.startupWindow)) || !d.hasInhibitRules() {
+		return 0
+	}
+	return d.firstFlushDelay
+}
+
 // notifyFunc is a function that performs notification for the alert
 // with the given fingerprint. It aborts on context cancelation.
 // Returns false iff notifying failed.
@@ -369,7 +400,7 @@ func (d *Dispatcher) processAlert(dispatchLink trace.Link, alert *types.Alert, r
 		return
 	}
 
-	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.timerFactory, d.marker)
+	ag = newAggrGroup(d.ctx, groupLabels, route, d.timeout, d.logger, d.timerFactory, d.marker, d.extraFirstFlushDelay())
 	routeGroups[fp] = ag
 	d.aggrGroupsNum++
 	d.metrics.aggrGroups.Inc()
@@ -436,12 +467,15 @@ type aggrGroup struct {
 	timer   Timer
 	timeout func(time.Duration) time.Duration
 
+	// firstFlushDelay is extra time added to the first flush timer.
+	firstFlushDelay time.Duration
+
 	mtx        sync.RWMutex
 	hasFlushed bool
 }
 
 // newAggrGroup returns a new aggregation group.
-func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger *slog.Logger, timerFactory TimerFactory, marker types.Marker) *aggrGroup {
+func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(time.Duration) time.Duration, logger *slog.Logger, timerFactory TimerFactory, marker types.Marker, firstFlushDelay time.Duration) *aggrGroup {
 	if to == nil {
 		to = func(d time.Duration) time.Duration { return d }
 	}
@@ -453,6 +487,8 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 		marker:   marker,
 		alerts:   store.NewAlerts(),
 		done:     make(chan struct{}),
+
+		firstFlushDelay: firstFlushDelay,
 	}
 	ag.ctx, ag.cancel = context.WithCancel(ctx)
 
@@ -460,9 +496,14 @@ func newAggrGroup(ctx context.Context, labels model.LabelSet, r *Route, to func(
 
 	// Set an initial one-time wait before flushing
 	// the first batch of notifications.
+	timerOpts := *ag.opts
+	if firstFlushDelay > 0 {
+		timerOpts.GroupWait += firstFlushDelay
+		ag.logger.Debug("Delaying first flush", "extra_delay", firstFlushDelay)
+	}
 	ag.timer = timerFactory(
 		ag.ctx,
-		ag.opts,
+		&timerOpts,
 		ag.logger,
 		uint64(ag.fingerprint()),
 	)
@@ -547,7 +588,7 @@ func (ag *aggrGroup) insert(alert *types.Alert) {
 	// alert is already over.
 	ag.mtx.Lock()
 	defer ag.mtx.Unlock()
-	if !ag.hasFlushed && alert.StartsAt.Add(ag.opts.GroupWait).Before(time.Now()) {
+	if !ag.hasFlushed && ag.firstFlushDelay == 0 && alert.StartsAt.Add(ag.opts.GroupWait).Before(time.Now()) {
 		ag.timer.Flush()
 	}
 }
