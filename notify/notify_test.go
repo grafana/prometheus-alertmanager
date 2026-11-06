@@ -63,7 +63,12 @@ type testNflog struct {
 	qres []*nflogpb.Entry
 	qerr error
 
-	logFunc func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	logFunc     func(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	refreshFunc func(r *nflogpb.Receiver, gkey string, now time.Time, expiry time.Duration)
+}
+
+func (l *testNflog) RefreshExpiry(r *nflogpb.Receiver, gkey string, now time.Time, expiry time.Duration) {
+	l.refreshFunc(r, gkey, now, expiry)
 }
 
 func (l *testNflog) Query(p ...nflog.QueryParam) ([]*nflogpb.Entry, error) {
@@ -1179,4 +1184,109 @@ func BenchmarkHashAlert(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		hashAlert(alert)
 	}
+}
+
+func TestMaintainNotificationLogStage(t *testing.T) {
+	recv := &nflogpb.Receiver{GroupName: "test"}
+	now := utcNow()
+	alerts := []*types.Alert{{}, {}}
+
+	t.Run("missing context values", func(t *testing.T) {
+		s := NewMaintainNotificationLogStage(&testNflog{}, recv)
+		ctx := context.Background()
+		_, _, err := s.Exec(ctx, promslog.NewNopLogger(), alerts...)
+		require.EqualError(t, err, "group key missing")
+		ctx = WithGroupKey(ctx, "1")
+		_, _, err = s.Exec(ctx, promslog.NewNopLogger(), alerts...)
+		require.EqualError(t, err, "repeat interval missing")
+		ctx = WithRepeatInterval(ctx, time.Hour)
+		_, _, err = s.Exec(ctx, promslog.NewNopLogger(), alerts...)
+		require.EqualError(t, err, "missing now timestamp")
+	})
+
+	cases := []struct {
+		name                    string
+		repeat                  time.Duration
+		groupInterval           time.Duration
+		expectedExpiry          time.Duration
+		withoutGroupIntervalCtx bool
+	}{
+		{name: "twice the repeat interval", repeat: time.Hour, groupInterval: time.Minute, expectedExpiry: 2 * time.Hour},
+		{name: "twice the group interval if it is larger", repeat: time.Minute, groupInterval: time.Hour, expectedExpiry: 2 * time.Hour},
+		{name: "without group interval", repeat: time.Hour, withoutGroupIntervalCtx: true, expectedExpiry: 2 * time.Hour},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var calls int
+			tnflog := &testNflog{refreshFunc: func(r *nflogpb.Receiver, gkey string, n time.Time, expiry time.Duration) {
+				calls++
+				require.Equal(t, recv, r)
+				require.Equal(t, "1", gkey)
+				require.Equal(t, now, n)
+				require.Equal(t, c.expectedExpiry, expiry)
+			}}
+			ctx := WithNow(WithRepeatInterval(WithGroupKey(context.Background(), "1"), c.repeat), now)
+			if !c.withoutGroupIntervalCtx {
+				ctx = WithGroupInterval(ctx, c.groupInterval)
+			}
+			resctx, res, err := NewMaintainNotificationLogStage(tnflog, recv).Exec(ctx, promslog.NewNopLogger(), alerts...)
+			require.NoError(t, err)
+			require.Equal(t, alerts, res, "alerts must pass through")
+			require.Equal(t, ctx, resctx)
+			require.Equal(t, 1, calls)
+		})
+	}
+}
+
+func TestReceiverStageMaintainsNotificationLog(t *testing.T) {
+	now := utcNow()
+	alert := &types.Alert{Alert: model.Alert{Labels: model.LabelSet{"alertname": "a"}}}
+	ctx := WithNow(WithGroupInterval(WithRepeatInterval(WithGroupKey(context.Background(), "1"), time.Hour), time.Minute), now)
+
+	var notified, logged, refreshed int
+	newStage := func(entry *nflogpb.Entry) Stage {
+		tnflog := &testNflog{
+			qres: []*nflogpb.Entry{entry},
+			logFunc: func(*nflogpb.Receiver, string, []uint64, []uint64, time.Duration) error {
+				logged++
+				return nil
+			},
+			refreshFunc: func(*nflogpb.Receiver, string, time.Time, time.Duration) {
+				refreshed++
+			},
+		}
+		if entry == nil {
+			tnflog.qres = nil
+			tnflog.qerr = nflog.ErrNotFound
+		}
+		integration := NewIntegration(notifierFunc(func(context.Context, ...*types.Alert) (bool, error) {
+			notified++
+			return false, nil
+		}), sendResolved(false), "test", 0, "recv")
+		metrics := NewMetrics(prometheus.NewRegistry(), featurecontrol.NoopFlags{})
+		return createReceiverStage("recv", []*Integration{integration}, func() time.Duration { return 0 }, tnflog, metrics)
+	}
+
+	// Nothing changed and the repeat interval has not elapsed: nothing is sent, the entry is maintained.
+	stage := newStage(&nflogpb.Entry{FiringAlerts: []uint64{hashAlert(alert)}, Timestamp: now.Add(-time.Minute)})
+	_, _, err := stage.Exec(ctx, promslog.NewNopLogger(), alert)
+	require.NoError(t, err)
+	require.Equal(t, 1, refreshed)
+	require.Zero(t, logged)
+	require.Zero(t, notified)
+
+	// Notification is sent: the log is written, and the entry has been maintained before.
+	refreshed = 0
+	stage = newStage(nil)
+	_, _, err = stage.Exec(ctx, promslog.NewNopLogger(), alert)
+	require.NoError(t, err)
+	require.Equal(t, 1, refreshed)
+	require.Equal(t, 1, logged)
+	require.Equal(t, 1, notified)
+
+	// Without alerts (for example all muted) the pipeline stops early and the entry is not maintained.
+	refreshed = 0
+	_, _, err = stage.Exec(ctx, promslog.NewNopLogger())
+	require.NoError(t, err)
+	require.Zero(t, refreshed)
 }

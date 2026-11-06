@@ -414,11 +414,6 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 		}
 	}
 
-	expiresAt := now.Add(l.retention)
-	if expiry > 0 && l.retention > expiry {
-		expiresAt = now.Add(expiry)
-	}
-
 	e := &pb.MeshEntry{
 		Entry: &pb.Entry{
 			Receiver:       r,
@@ -427,7 +422,7 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 			FiringAlerts:   firingAlerts,
 			ResolvedAlerts: resolvedAlerts,
 		},
-		ExpiresAt: expiresAt,
+		ExpiresAt: l.expiresAt(now, expiry),
 	}
 
 	b, err := marshalMeshEntry(e)
@@ -438,6 +433,47 @@ func (l *Log) Log(r *pb.Receiver, gkey string, firingAlerts, resolvedAlerts []ui
 	l.broadcast(b)
 
 	return nil
+}
+
+// expiresAt returns the expiration time of an entry written at now. The
+// requested expiry is capped by the configured retention.
+func (l *Log) expiresAt(now time.Time, expiry time.Duration) time.Time {
+	if expiry > 0 && l.retention > expiry {
+		return now.Add(expiry)
+	}
+	return now.Add(l.retention)
+}
+
+// RefreshExpiry extends the expiration of the existing entry for the group key
+// and receiver without changing the entry itself (timestamp, firing and
+// resolved alerts), so deduplication decisions stay the same. It keeps the
+// entry from expiring before the repeat interval has elapsed, because the log
+// is otherwise written only when a notification is sent.
+//
+// The expiration is derived from now, which callers must take from the
+// pipeline time rather than from a local clock. All cluster peers run the same
+// pipeline for the same flush, so they compute the same value independently.
+// The change is local only: it is neither broadcast nor merged with peers.
+//
+// RefreshExpiry never creates an entry and never shortens an expiration.
+func (l *Log) RefreshExpiry(r *pb.Receiver, gkey string, now time.Time, expiry time.Duration) {
+	key := stateKey(gkey, r)
+
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
+
+	prev, ok := l.st[key]
+	if !ok {
+		return
+	}
+	expiresAt := l.expiresAt(now, expiry)
+	if !expiresAt.After(prev.ExpiresAt) {
+		return
+	}
+	// Replace the whole MeshEntry instead of mutating it: Query hands out
+	// pointers to the inner Entry, and a mutated ExpiresAt could race with
+	// marshaling.
+	l.st[key] = &pb.MeshEntry{Entry: prev.Entry, ExpiresAt: expiresAt}
 }
 
 // marshalStateWithinLimit serializes the log without modifying it, dropping entries
