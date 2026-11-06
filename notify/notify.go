@@ -293,6 +293,8 @@ func (f StageFunc) Exec(ctx context.Context, l *slog.Logger, alerts ...*types.Al
 
 type NotificationLog interface {
 	Log(r *nflogpb.Receiver, gkey string, firingAlerts, resolvedAlerts []uint64, expiry time.Duration) error
+	// RefreshExpiry extends the expiration of the existing entry without changing it. See nflog.Log.RefreshExpiry.
+	RefreshExpiry(r *nflogpb.Receiver, gkey string, now time.Time, expiry time.Duration)
 	Query(params ...nflog.QueryParam) ([]*nflogpb.Entry, error)
 }
 
@@ -472,6 +474,7 @@ func createReceiverStage(
 			Idx:         uint32(integrations[i].Index()),
 		}
 		var s MultiStage
+		s = append(s, NewMaintainNotificationLogStage(notificationLog, recv))
 		s = append(s, NewWaitStage(wait))
 		s = append(s, NewDedupStage(integrations[i], notificationLog, recv))
 		s = append(s, NewRetryStage(integrations[i], name, metrics))
@@ -1038,16 +1041,66 @@ func (n SetNotifiesStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*t
 		return ctx, nil, errors.New("repeat interval missing")
 	}
 
-	// The nflog entry must outlive the group's flush cadence, not just the repeat cycle.
-	// A resolved notification can only be emitted at a flush (group_interval) and needs the firing entry to still be present.
-	// With only 2*repeat, a group_interval larger than 2*repeat_interval lets the entry be swept before the resolve is flushed,
-	// silently dropping the resolved notification.
+	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, nflogExpiry(ctx, repeat))
+}
+
+// nflogExpiry returns the expiry to request for a notification log entry.
+//
+// The nflog entry must outlive the group's flush cadence, not just the repeat cycle.
+// A resolved notification can only be emitted at a flush (group_interval) and needs the firing entry to still be present.
+// With only 2*repeat, a group_interval larger than 2*repeat_interval lets the entry be swept before the resolve is flushed,
+// silently dropping the resolved notification.
+func nflogExpiry(ctx context.Context, repeat time.Duration) time.Duration {
 	expiry := 2 * repeat
 	if groupInterval, ok := GroupInterval(ctx); ok && groupInterval > repeat {
 		expiry = 2 * groupInterval
 	}
+	return expiry
+}
 
-	return ctx, alerts, n.nflog.Log(n.recv, gkey, firing, resolved, expiry)
+// MaintainNotificationLogStage keeps the notification log entry of a group
+// from expiring while the group still has alerts to flush.
+//
+// The notification log caps the expiry of an entry at its retention. An entry
+// is written only when a notification is sent, so when repeat_interval is
+// longer than the retention the entry of an unchanged group expires before the
+// repeat interval has elapsed. The next flush then finds no entry and notifies
+// the group again too early.
+//
+// The stage runs on every flush before the WaitStage and the DedupStage and
+// extends the expiry of the existing entry (see nflog.Log.RefreshExpiry). The entry itself (timestamp, alerts) is not
+// changed, so the deduplication decision is not affected. The stage passes the
+// alerts through unchanged.
+type MaintainNotificationLogStage struct {
+	nflog NotificationLog
+	recv  *nflogpb.Receiver
+}
+
+// NewMaintainNotificationLogStage returns a new instance of a MaintainNotificationLogStage.
+func NewMaintainNotificationLogStage(l NotificationLog, recv *nflogpb.Receiver) *MaintainNotificationLogStage {
+	return &MaintainNotificationLogStage{nflog: l, recv: recv}
+}
+
+// Exec implements the Stage interface.
+func (n MaintainNotificationLogStage) Exec(ctx context.Context, _ *slog.Logger, alerts ...*types.Alert) (context.Context, []*types.Alert, error) {
+	gkey, ok := GroupKey(ctx)
+	if !ok {
+		return ctx, nil, errors.New("group key missing")
+	}
+
+	repeat, ok := RepeatInterval(ctx)
+	if !ok {
+		return ctx, nil, errors.New("repeat interval missing")
+	}
+
+	// The pipeline time is the same on all cluster peers, which keeps the result deterministic.
+	now, ok := Now(ctx)
+	if !ok {
+		return ctx, nil, errors.New("missing now timestamp")
+	}
+
+	n.nflog.RefreshExpiry(n.recv, gkey, now, nflogExpiry(ctx, repeat))
+	return ctx, alerts, nil
 }
 
 type timeStage struct {
