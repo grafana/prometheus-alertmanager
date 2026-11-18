@@ -20,6 +20,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/promslog"
+	"github.com/stretchr/testify/require"
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
 	"github.com/prometheus/alertmanager/pkg/labels"
@@ -476,4 +477,11 @@ func TestInhibit(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestInhibitorHasRules(t *testing.T) {
+	var nilInhibitor *Inhibitor
+	require.False(t, nilInhibitor.HasRules())
+	require.False(t, (&Inhibitor{}).HasRules())
+	require.True(t, (&Inhibitor{rules: []*InhibitRule{{}}}).HasRules())
 }

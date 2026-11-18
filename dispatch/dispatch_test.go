@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/prometheus/alertmanager/config"
 	"github.com/prometheus/alertmanager/notify"
@@ -143,7 +145,7 @@ func TestAggrGroup(t *testing.T) {
 	}
 
 	// Test regular situation where we wait for group_wait to send out alerts.
-	ag := newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, nil)
+	ag := newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, nil, 0)
 	go ag.run(ntfy)
 
 	ag.insert(a1)
@@ -197,7 +199,7 @@ func TestAggrGroup(t *testing.T) {
 	// immediate flushing.
 	// Finally, set all alerts to be resolved. After successful notify the aggregation group
 	// should empty itself.
-	ag = newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, nil)
+	ag = newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, nil, 0)
 	go ag.run(ntfy)
 
 	ag.insert(a1)
@@ -736,7 +738,7 @@ func TestAggrGroupFlushDeletesMarkerEntries(t *testing.T) {
 
 	newGroup := func() (types.Marker, *aggrGroup) {
 		m := types.NewMarker(prometheus.NewRegistry())
-		return m, newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, m)
+		return m, newAggrGroup(context.Background(), lset, route, nil, promslog.NewNopLogger(), standardTimerFactory, m, 0)
 	}
 
 	// nfWithInhibit simulates MuteStage calling SetInhibited unconditionally for
@@ -823,4 +825,150 @@ func TestAggrGroupFlushDeletesMarkerEntries(t *testing.T) {
 		require.False(t, inhibited)
 		require.True(t, marker.Active(a2.Fingerprint()))
 	})
+}
+
+func TestDispatcherFirstFlushDelay(t *testing.T) {
+	const delay = time.Hour
+
+	tests := []struct {
+		name      string
+		delay     time.Duration
+		window    time.Duration
+		startedAt time.Time
+		rules     bool
+		expected  time.Duration
+	}{
+		{name: "applied inside window with rules", delay: delay, window: time.Minute, startedAt: time.Now(), rules: true, expected: delay},
+		{name: "not applied without rules", delay: delay, window: time.Minute, startedAt: time.Now(), rules: false},
+		{name: "not applied after window", delay: delay, window: time.Minute, startedAt: time.Now().Add(-time.Hour), rules: true},
+		{name: "not applied with negative delay", delay: -time.Hour, window: time.Minute, startedAt: time.Now(), rules: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var groupWait time.Duration
+			timerFactory := func(ctx context.Context, o *RouteOpts, l *slog.Logger, fp uint64) Timer {
+				groupWait = o.GroupWait
+				return standardTimerFactory(ctx, o, l, fp)
+			}
+			route := &Route{RouteOpts: RouteOpts{
+				Receiver:      "default",
+				GroupBy:       map[model.LabelName]struct{}{"alertname": {}},
+				GroupWait:     time.Minute,
+				GroupInterval: time.Hour,
+			}}
+			d := NewDispatcher(nil, route, &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}, types.NewMarker(prometheus.NewRegistry()), nil, nil, promslog.NewNopLogger(), NewDispatcherMetrics(false, prometheus.NewRegistry()), timerFactory,
+				WithFirstFlushDelay(tc.delay, tc.window, func() bool { return tc.rules }))
+			d.ctx, d.cancel = context.WithCancel(context.Background())
+			defer d.cancel()
+			d.aggrGroupsPerRoute = map[*Route]map[model.Fingerprint]*aggrGroup{}
+			d.startedAt = tc.startedAt
+
+			d.processAlert(trace.Link{}, newAlert(model.LabelSet{"alertname": "a"}), route)
+
+			require.Equal(t, time.Minute+tc.expected, groupWait)
+			for _, ag := range d.aggrGroupsPerRoute[route] {
+				require.Equal(t, tc.expected, ag.firstFlushDelay)
+			}
+			require.Equal(t, time.Minute, route.RouteOpts.GroupWait)
+		})
+	}
+}
+
+// flushCountTimer counts Flush calls on the wrapped timer.
+type flushCountTimer struct {
+	Timer
+	flushes atomic.Int32
+}
+
+func (t *flushCountTimer) Flush() bool {
+	t.flushes.Add(1)
+	return t.Timer.Flush()
+}
+
+func TestAggrGroupInsertOldAlertWithFirstFlushDelay(t *testing.T) {
+	route := &Route{RouteOpts: RouteOpts{
+		Receiver:      "default",
+		GroupBy:       map[model.LabelName]struct{}{"alertname": {}},
+		GroupWait:     time.Hour,
+		GroupInterval: time.Hour,
+	}}
+	oldAlert := &types.Alert{
+		Alert: model.Alert{
+			Labels:   model.LabelSet{"alertname": "a"},
+			StartsAt: time.Now().Add(-3 * time.Hour),
+			EndsAt:   time.Now().Add(time.Hour),
+		},
+		UpdatedAt: time.Now(),
+	}
+
+	for name, tc := range map[string]struct {
+		delay   time.Duration
+		flushed bool
+	}{
+		"delayed group does not flush old alert": {delay: time.Hour},
+		"group without delay flushes old alert":  {flushed: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var timer *flushCountTimer
+			timerFactory := func(ctx context.Context, o *RouteOpts, l *slog.Logger, fp uint64) Timer {
+				timer = &flushCountTimer{Timer: standardTimerFactory(ctx, o, l, fp)}
+				return timer
+			}
+			ag := newAggrGroup(context.Background(), model.LabelSet{"alertname": "a"}, route, nil, promslog.NewNopLogger(), timerFactory, nil, tc.delay)
+			flushed := make(chan struct{}, 1)
+			go ag.run(func(context.Context, ...*types.Alert) bool {
+				flushed <- struct{}{}
+				return true
+			})
+			defer func() {
+				ag.cancel()
+				<-ag.done
+			}()
+			ag.insert(oldAlert)
+
+			if !tc.flushed {
+				require.Zero(t, timer.flushes.Load())
+				return
+			}
+			select {
+			case <-flushed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("expected flush")
+			}
+		})
+	}
+}
+
+func TestDispatcherRunStartsFirstFlushWindow(t *testing.T) {
+	logger := promslog.NewNopLogger()
+	marker := types.NewMarker(prometheus.NewRegistry())
+	alerts, err := mem.NewAlerts(context.Background(), marker, time.Hour, nil, logger, nil)
+	require.NoError(t, err)
+	defer alerts.Close()
+
+	route := &Route{RouteOpts: RouteOpts{
+		Receiver:      "default",
+		GroupBy:       map[model.LabelName]struct{}{"alertname": {}},
+		GroupWait:     time.Minute,
+		GroupInterval: time.Hour,
+	}}
+	groupWait := make(chan time.Duration, 1)
+	timerFactory := func(ctx context.Context, o *RouteOpts, l *slog.Logger, fp uint64) Timer {
+		groupWait <- o.GroupWait
+		return standardTimerFactory(ctx, o, l, fp)
+	}
+	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*types.Alert)}
+	d := NewDispatcher(alerts, route, recorder, marker, nil, nil, logger, NewDispatcherMetrics(false, prometheus.NewRegistry()), timerFactory,
+		WithFirstFlushDelay(time.Hour, time.Minute, func() bool { return true }))
+	go d.Run()
+	defer d.Stop()
+
+	require.NoError(t, alerts.Put(newAlert(model.LabelSet{"alertname": "a"})))
+
+	select {
+	case got := <-groupWait:
+		require.Equal(t, time.Minute+time.Hour, got)
+	case <-time.After(5 * time.Second):
+		t.Fatal("group was not created")
+	}
 }
