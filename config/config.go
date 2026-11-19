@@ -446,15 +446,15 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			if msteamsv2 == nil {
 				return errors.New("missing msteamsv2 config")
 			}
-			if msteamsv2.HTTPConfig == nil {
-				// copy the global config so receiver-level mutations don't affect it
-				httpCfg := *c.Global.HTTPConfig
-				msteamsv2.HTTPConfig = &httpCfg
-			} else if msteamsv2.HTTPConfig.ProxyURL.URL == nil {
-				// receiver has a partial http_config but no proxy_url set,
-				// so inherit only the proxy_url from global, leaving any
-				// other proxy fields the receiver set (NoProxy, etc.) intact
-				msteamsv2.HTTPConfig.ProxyURL = c.Global.HTTPConfig.ProxyURL
+			if globalHTTPConfig := c.Global.HTTPConfig; globalHTTPConfig != nil {
+				if msteamsv2.HTTPConfig == nil {
+					// Make a shallow copy of the global HTTP config.
+					httpCfg := *globalHTTPConfig
+					msteamsv2.HTTPConfig = &httpCfg
+				} else if !msteamsv2.HTTPConfig.ProxyFromEnvironment && msteamsv2.HTTPConfig.ProxyURL.URL == nil {
+					// Inherit only the proxy URL when there is no receiver proxy mode.
+					msteamsv2.HTTPConfig.ProxyURL = globalHTTPConfig.ProxyURL
+				}
 			}
 			if msteamsv2.WebhookURL == nil && len(msteamsv2.WebhookURLFile) == 0 {
 				return errors.New("no msteamsv2 webhook URL or URLFile provided")

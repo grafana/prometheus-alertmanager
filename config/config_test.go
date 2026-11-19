@@ -1168,3 +1168,53 @@ receivers:
 		t.Errorf("expected local proxy_url %q, got %q", "http://local-proxy.example.com:8080", got)
 	}
 }
+
+func TestMSTeamsV2PreservesReceiverHTTPSettingsWithoutGlobal(t *testing.T) {
+	const in = `
+global:
+  http_config: null
+route:
+  receiver: teams
+receivers:
+- name: teams
+  msteamsv2_configs:
+  - webhook_url: "https://example.com/teams"
+  - webhook_url: "https://example.com/teams"
+    http_config:
+      follow_redirects: false
+`
+	cfg, err := Load(in)
+	require.NoError(t, err)
+	require.Nil(t, cfg.Global.HTTPConfig)
+
+	configs := cfg.Receivers[0].MSTeamsV2Configs
+	require.Len(t, configs, 2)
+	require.Nil(t, configs[0].HTTPConfig)
+	require.NotNil(t, configs[1].HTTPConfig)
+	require.False(t, configs[1].HTTPConfig.FollowRedirects)
+	require.Nil(t, configs[1].HTTPConfig.ProxyURL.URL)
+}
+
+func TestMSTeamsV2EnvironmentProxyTakesPrecedence(t *testing.T) {
+	const in = `
+global:
+  http_config:
+    proxy_url: "http://proxy.example.com:3128"
+route:
+  receiver: teams
+receivers:
+- name: teams
+  msteamsv2_configs:
+  - webhook_url: "https://example.com/teams"
+    http_config:
+      proxy_from_environment: true
+`
+	cfg, err := Load(in)
+	require.NoError(t, err)
+
+	httpConfig := cfg.Receivers[0].MSTeamsV2Configs[0].HTTPConfig
+	require.NotNil(t, httpConfig)
+	require.True(t, httpConfig.ProxyFromEnvironment)
+	require.Nil(t, httpConfig.ProxyURL.URL)
+	require.NoError(t, httpConfig.Validate())
+}
