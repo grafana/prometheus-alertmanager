@@ -277,8 +277,11 @@ type SlackConfig struct {
 
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
-	APIURL     *amcommoncfg.SecretURL `yaml:"api_url,omitempty" json:"api_url,omitempty"`
-	APIURLFile string                 `yaml:"api_url_file,omitempty" json:"api_url_file,omitempty"`
+	APIURL       *amcommoncfg.SecretURL `yaml:"api_url,omitempty" json:"api_url,omitempty"`
+	APIURLFile   string                 `yaml:"api_url_file,omitempty" json:"api_url_file,omitempty"`
+	AppToken     commoncfg.Secret       `yaml:"app_token,omitempty" json:"app_token,omitempty"`
+	AppTokenFile string                 `yaml:"app_token_file,omitempty" json:"app_token_file,omitempty"`
+	AppURL       *amcommoncfg.URL       `yaml:"app_url,omitempty" json:"app_url,omitempty"`
 
 	// Slack channel override, (like #other-channel or @username).
 	Channel  string `yaml:"channel,omitempty" json:"channel,omitempty"`
@@ -289,6 +292,7 @@ type SlackConfig struct {
 	TitleLink   string         `yaml:"title_link,omitempty" json:"title_link,omitempty"`
 	Pretext     string         `yaml:"pretext,omitempty" json:"pretext,omitempty"`
 	Text        string         `yaml:"text,omitempty" json:"text,omitempty"`
+	MessageText string         `yaml:"message_text,omitempty" json:"message_text,omitempty"`
 	Fields      []*SlackField  `yaml:"fields,omitempty" json:"fields,omitempty"`
 	ShortFields bool           `yaml:"short_fields" json:"short_fields,omitempty"`
 	Footer      string         `yaml:"footer,omitempty" json:"footer,omitempty"`
@@ -301,10 +305,18 @@ type SlackConfig struct {
 	LinkNames   bool           `yaml:"link_names" json:"link_names,omitempty"`
 	MrkdwnIn    []string       `yaml:"mrkdwn_in,omitempty" json:"mrkdwn_in,omitempty"`
 	Actions     []*SlackAction `yaml:"actions,omitempty" json:"actions,omitempty"`
+
+	// UpdateMessage enables updating existing Slack messages instead of creating new ones.
+	// Requires bot token with chat:write scope. Webhook URLs do not support updates.
+
+	UpdateMessage bool `yaml:"update_message" json:"update_message,omitempty"`
+	// Timeout is the maximum time allowed to invoke the slack. Setting this to 0
+	// does not impose a timeout.
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *SlackConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *SlackConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	*c = DefaultSlackConfig
 	type plain SlackConfig
 	if err := unmarshal((*plain)(c)); err != nil {
@@ -313,6 +325,16 @@ func (c *SlackConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 
 	if c.APIURL != nil && len(c.APIURLFile) > 0 {
 		return errors.New("at most one of api_url & api_url_file must be configured")
+	}
+	if c.AppToken != "" && len(c.AppTokenFile) > 0 {
+		return errors.New("at most one of app_token & app_token_file must be configured")
+	}
+	if (c.APIURL != nil || len(c.APIURLFile) > 0) && (c.AppToken != "" || len(c.AppTokenFile) > 0) {
+		return errors.New("at most one of api_url/api_url_file & app_token/app_token_file must be configured")
+	}
+
+	if c.UpdateMessage && c.APIURL.String() != "https://slack.com/api/chat.postMessage" {
+		return errors.New("update_message can only be used with bot tokens. api_url must be set to https://slack.com/api/chat.postMessage")
 	}
 
 	return nil

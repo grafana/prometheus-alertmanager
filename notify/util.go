@@ -294,6 +294,7 @@ const (
 	ServerErrorReason
 	ContextCanceledReason
 	ContextDeadlineExceededReason
+	AuthErrorReason
 )
 
 func (s Reason) String() string {
@@ -308,16 +309,28 @@ func (s Reason) String() string {
 		return "contextCanceled"
 	case ContextDeadlineExceededReason:
 		return "contextDeadlineExceeded"
+	case AuthErrorReason:
+		return "authError"
 	default:
 		panic(fmt.Sprintf("unknown Reason: %d", s))
 	}
 }
 
 // possibleFailureReasonCategory is a list of possible failure reason.
-var possibleFailureReasonCategory = []string{DefaultReason.String(), ClientErrorReason.String(), ServerErrorReason.String(), ContextCanceledReason.String(), ContextDeadlineExceededReason.String()}
+var possibleFailureReasonCategory = []string{
+	DefaultReason.String(),
+	ClientErrorReason.String(),
+	ServerErrorReason.String(),
+	ContextCanceledReason.String(),
+	ContextDeadlineExceededReason.String(),
+	AuthErrorReason.String(),
+}
 
 // GetFailureReasonFromStatusCode returns the reason for the failure based on the status code provided.
 func GetFailureReasonFromStatusCode(statusCode int) Reason {
+	if statusCode == http.StatusUnauthorized {
+		return AuthErrorReason
+	}
 	if statusCode/100 == 4 {
 		return ClientErrorReason
 	}
