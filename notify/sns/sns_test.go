@@ -113,13 +113,14 @@ func TestNotifyWithInvalidTemplate(t *testing.T) {
 			},
 		},
 	} {
-		tc := tc
 		t.Run(tc.title, func(t *testing.T) {
 			snsCfg := &config.SNSConfig{
 				HTTPConfig: &commoncfg.HTTPClientConfig{},
 				TopicARN:   "TestTopic",
 				Sigv4: sigv4.SigV4Config{
-					Region: "us-west-2",
+					Region:     "us-west-2",
+					RoleARN:    "my:role/arn",
+					ExternalID: "external_id",
 				},
 			}
 			if tc.updateCfg != nil {
