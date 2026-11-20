@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,12 +29,32 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v2"
 
 	amcommoncfg "github.com/prometheus/alertmanager/config/common"
+
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
 )
+
+func TestTelegramUnmarshal(t *testing.T) {
+	in := `
+  chat_id: 1234
+  bot_token: secret
+  message_thread_id: 1357
+  api_url: https://api.telegram.org
+`
+	var c TelegramConfig
+	err := yaml.Unmarshal([]byte(in), &c)
+	require.NoError(t, err)
+
+	require.Equal(t, "https://api.telegram.org", c.APIUrl.String())
+	require.Equal(t, commoncfg.Secret("secret"), c.BotToken)
+	require.Equal(t, int64(1234), c.ChatID)
+	require.Equal(t, 1357, c.MessageThreadID)
+	require.Equal(t, "HTML", c.ParseMode)
+}
 
 func TestTelegramRetry(t *testing.T) {
 	// Fake url for testing purposes
@@ -62,7 +83,7 @@ func TestTelegramRetry(t *testing.T) {
 func TestTelegramNotify(t *testing.T) {
 	token := "secret"
 
-	fileWithToken, err := os.CreateTemp("", "telegram-bot-token")
+	fileWithToken, err := os.CreateTemp(t.TempDir(), "telegram-bot-token")
 	require.NoError(t, err, "creating temp file failed")
 	_, err = fileWithToken.WriteString(token)
 	require.NoError(t, err, "writing to temp file failed")
@@ -100,6 +121,45 @@ func TestTelegramNotify(t *testing.T) {
 			},
 			expText: "test",
 		},
+		{
+			name: "HTML mode with too-large message",
+			cfg: TelegramConfig{
+				ParseMode:  "HTML",
+				Message:    strings.Repeat("x", 5000),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: `Alertmanager notification could not be sent: message length exceeds Telegram limits.
+			Please check the template used for producing the message content.`,
+		},
+		{
+			name: "Default mode with too-large message",
+			cfg: TelegramConfig{
+				Message:    strings.Repeat("y", 5000),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: strings.Repeat("y", maxMessageLenRunes-1) + "…",
+		},
+		{
+			name: "HTML mode with message smaller than limit",
+			cfg: TelegramConfig{
+				ParseMode:  "HTML",
+				Message:    strings.Repeat("a", 100),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: strings.Repeat("a", 100),
+		},
+		{
+			name: "Default mode with message smaller than limit",
+			cfg: TelegramConfig{
+				Message:    strings.Repeat("b", 100),
+				HTTPConfig: &commoncfg.HTTPClientConfig{},
+				BotToken:   commoncfg.Secret(token),
+			},
+			expText: strings.Repeat("b", 100),
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out []byte
@@ -118,7 +178,7 @@ func TestTelegramNotify(t *testing.T) {
 			notifier, err := New(&tc.cfg, test.CreateTmpl(t), promslog.NewNopLogger())
 			require.NoError(t, err)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			ctx = notify.WithGroupKey(ctx, "1")
 
