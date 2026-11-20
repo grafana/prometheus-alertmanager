@@ -1056,6 +1056,19 @@ receivers:
 	require.Equal(t, "HTML", c.Receivers[0].TelegramConfigs[0].ParseMode)
 }
 
+func TestMSTeamsRejectsMissingConfig(t *testing.T) {
+	in := `
+route:
+  receiver: teams
+receivers:
+- name: teams
+  msteams_configs:
+  -
+`
+	_, err := Load(in)
+	require.ErrorContains(t, err, "missing msteams config")
+}
+
 func TestMSTeamsV2RejectsMissingConfig(t *testing.T) {
 	in := `
 route:
