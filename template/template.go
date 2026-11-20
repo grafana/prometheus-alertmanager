@@ -15,6 +15,8 @@ package template
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	tmplhtml "html/template"
 	"io"
 	"net/url"
@@ -205,6 +207,38 @@ var DefaultFuncs = FuncMap{
 			return time.Time{}, err
 		}
 		return t.In(loc), nil
+	},
+	"toJson": func(v any) (string, error) {
+		bytes, err := json.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		return string(bytes), nil
+	},
+	"list": func(args ...any) ([]any, error) {
+		if args == nil {
+			return []any{}, nil
+		}
+		return args, nil
+	},
+	"append": func(slice []any, args ...any) []any {
+		return append(slice, args...)
+	},
+	"dict": func(values ...any) (map[string]any, error) {
+		if len(values)%2 != 0 {
+			return nil, fmt.Errorf("dict requires an even number of arguments")
+		}
+
+		res := make(map[string]any, len(values)/2)
+		for i := 0; i < len(values); i += 2 {
+			key, ok := values[i].(string)
+			if !ok {
+				return nil, fmt.Errorf("dict keys must be strings")
+			}
+			res[key] = values[i+1]
+		}
+
+		return res, nil
 	},
 }
 
