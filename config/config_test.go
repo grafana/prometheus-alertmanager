@@ -772,7 +772,7 @@ func TestVictorOpsDefaultAPIKey(t *testing.T) {
 	}
 
 	defaultKey := conf.Global.VictorOpsAPIKey
-	overrideKey := Secret("qwe456")
+	overrideKey := commoncfg.Secret("qwe456")
 	if defaultKey != conf.Receivers[0].VictorOpsConfigs[0].APIKey {
 		t.Fatalf("Invalid victorops key: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKey, defaultKey)
 	}
@@ -1097,6 +1097,19 @@ receivers:
 `
 	_, err := Load(in)
 	require.ErrorContains(t, err, "missing discord config")
+}
+
+func TestPushoverRejectsMissingConfig(t *testing.T) {
+	in := `
+route:
+  receiver: pushover
+receivers:
+- name: pushover
+  pushover_configs:
+  -
+`
+	_, err := Load(in)
+	require.ErrorContains(t, err, "missing pushover config")
 }
 
 func TestMSTeamsV2RejectsMissingConfig(t *testing.T) {

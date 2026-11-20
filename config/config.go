@@ -14,6 +14,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -255,6 +256,10 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return errors.New("at most one of smtp_auth_password & smtp_auth_password_file must be configured")
 	}
 
+	if c.Global.WeChatAPISecret != "" && len(c.Global.WeChatAPISecretFile) > 0 {
+		return errors.New("at most one of wechat_api_secret & wechat_api_secret_file must be configured")
+	}
+
 	names := map[string]struct{}{}
 
 	for _, rcv := range c.Receivers {
@@ -313,9 +318,10 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			}
 		}
 		for _, poc := range rcv.PushoverConfigs {
-			if poc.HTTPConfig == nil {
-				poc.HTTPConfig = c.Global.HTTPConfig
+			if poc == nil {
+				return errors.New("missing pushover config")
 			}
+			poc.HTTPConfig = cmp.Or(poc.HTTPConfig, c.Global.HTTPConfig)
 		}
 		for _, pdc := range rcv.PagerdutyConfigs {
 			if pdc.HTTPConfig == nil {
@@ -350,29 +356,26 @@ func (c *Config) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			}
 		}
 		for _, wcc := range rcv.WechatConfigs {
-			if wcc.HTTPConfig == nil {
-				wcc.HTTPConfig = c.Global.HTTPConfig
+			if wcc == nil {
+				wcc = &WechatConfig{}
 			}
-
+			wcc.HTTPConfig = cmp.Or(wcc.HTTPConfig, c.Global.HTTPConfig)
+			wcc.APIURL = cmp.Or(wcc.APIURL, c.Global.WeChatAPIURL)
 			if wcc.APIURL == nil {
-				if c.Global.WeChatAPIURL == nil {
-					return errors.New("no global Wechat URL set")
-				}
-				wcc.APIURL = c.Global.WeChatAPIURL
+				return errors.New("no global Wechat URL set")
 			}
 
-			if wcc.APISecret == "" {
-				if c.Global.WeChatAPISecret == "" {
-					return errors.New("no global Wechat ApiSecret set")
+			if wcc.APISecret == "" && len(wcc.APISecretFile) == 0 {
+				if c.Global.WeChatAPISecret == "" && len(c.Global.WeChatAPISecretFile) == 0 {
+					return errors.New("no global Wechat Api Secret set either inline or in a file")
 				}
 				wcc.APISecret = c.Global.WeChatAPISecret
+				wcc.APISecretFile = c.Global.WeChatAPISecretFile
 			}
 
+			wcc.CorpID = cmp.Or(wcc.CorpID, c.Global.WeChatAPICorpID)
 			if wcc.CorpID == "" {
-				if c.Global.WeChatAPICorpID == "" {
-					return errors.New("no global Wechat CorpID set")
-				}
-				wcc.CorpID = c.Global.WeChatAPICorpID
+				return errors.New("no global Wechat CorpID set")
 			}
 
 			if !strings.HasSuffix(wcc.APIURL.Path, "/") {
@@ -670,10 +673,11 @@ type GlobalConfig struct {
 	OpsGenieAPIKey       Secret                 `yaml:"opsgenie_api_key,omitempty" json:"opsgenie_api_key,omitempty"`
 	OpsGenieAPIKeyFile   string                 `yaml:"opsgenie_api_key_file,omitempty" json:"opsgenie_api_key_file,omitempty"`
 	WeChatAPIURL         *amcommoncfg.URL       `yaml:"wechat_api_url,omitempty" json:"wechat_api_url,omitempty"`
-	WeChatAPISecret      Secret                 `yaml:"wechat_api_secret,omitempty" json:"wechat_api_secret,omitempty"`
+	WeChatAPISecret      commoncfg.Secret       `yaml:"wechat_api_secret,omitempty" json:"wechat_api_secret,omitempty"`
+	WeChatAPISecretFile  string                 `yaml:"wechat_api_secret_file,omitempty" json:"wechat_api_secret_file,omitempty"`
 	WeChatAPICorpID      string                 `yaml:"wechat_api_corp_id,omitempty" json:"wechat_api_corp_id,omitempty"`
 	VictorOpsAPIURL      *amcommoncfg.URL       `yaml:"victorops_api_url,omitempty" json:"victorops_api_url,omitempty"`
-	VictorOpsAPIKey      Secret                 `yaml:"victorops_api_key,omitempty" json:"victorops_api_key,omitempty"`
+	VictorOpsAPIKey      commoncfg.Secret       `yaml:"victorops_api_key,omitempty" json:"victorops_api_key,omitempty"`
 	VictorOpsAPIKeyFile  string                 `yaml:"victorops_api_key_file,omitempty" json:"victorops_api_key_file,omitempty"`
 	TelegramAPIUrl       *amcommoncfg.URL       `yaml:"telegram_api_url,omitempty" json:"telegram_api_url,omitempty"`
 	WebexAPIURL          *amcommoncfg.URL       `yaml:"webex_api_url,omitempty" json:"webex_api_url,omitempty"`
