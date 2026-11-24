@@ -14,7 +14,7 @@ require (
 	github.com/benbjohnson/clock v1.3.5
 	github.com/cenkalti/backoff/v4 v4.2.1
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/emersion/go-smtp v0.24.0
+	github.com/emersion/go-smtp v0.25.1
 	github.com/go-openapi/analysis v0.22.2
 	github.com/go-openapi/errors v0.21.0
 	github.com/go-openapi/loads v0.21.5
