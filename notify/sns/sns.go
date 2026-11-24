@@ -77,7 +77,7 @@ func newSNSHTTPClient(c *config.SNSConfig, httpOpts ...commoncfg.HTTPClientOptio
 	if c.UseAWSHTTPClient || os.Getenv("AWS_CA_BUNDLE") != "" {
 		return newAWSBuildableClient(c)
 	}
-	return commoncfg.NewClientFromConfig(*c.HTTPConfig, "sns", httpOpts...)
+	return notify.NewClientWithTracing(*c.HTTPConfig, "sns", httpOpts...)
 }
 
 // newAWSBuildableClient builds a BuildableClient pre-configured with the
@@ -182,7 +182,16 @@ func (n *Notifier) createSNSClient(ctx context.Context, tmpl func(string) string
 			return nil, fmt.Errorf("failed to load base config for STS: %w", err)
 		}
 		stsClient := sts.NewFromConfig(stsCfg)
-		stsProvider := stscreds.NewAssumeRoleProvider(stsClient, n.conf.Sigv4.RoleARN)
+		stsProvider := stscreds.NewAssumeRoleProvider(
+			stsClient,
+			n.conf.Sigv4.RoleARN,
+			// This adds an optional external_id configuration field that is passed to STS AssumeRole when role_arn is specified.
+			func(o *stscreds.AssumeRoleOptions) {
+				if n.conf.Sigv4.ExternalID != "" {
+					o.ExternalID = aws.String(n.conf.Sigv4.ExternalID)
+				}
+			},
+		)
 		// Add the AssumeRole provider to the options for the SNS client config.
 		snsCfgOpts = append(snsCfgOpts, awsconfig.WithCredentialsProvider(aws.NewCredentialsCache(stsProvider)))
 	}
