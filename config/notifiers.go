@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/textproto"
 	"regexp"
+	"slices"
 	"time"
 
 	commoncfg "github.com/prometheus/common/config"
@@ -146,24 +147,37 @@ type EmailConfig struct {
 	amcommoncfg.NotifierConfig `yaml:",inline" json:",inline"`
 
 	// Email address to notify.
-	To               string              `yaml:"to,omitempty" json:"to,omitempty"`
-	From             string              `yaml:"from,omitempty" json:"from,omitempty"`
-	Hello            string              `yaml:"hello,omitempty" json:"hello,omitempty"`
-	Smarthost        HostPort            `yaml:"smarthost,omitempty" json:"smarthost,omitempty"`
-	AuthUsername     string              `yaml:"auth_username,omitempty" json:"auth_username,omitempty"`
-	AuthPassword     Secret              `yaml:"auth_password,omitempty" json:"auth_password,omitempty"`
-	AuthPasswordFile string              `yaml:"auth_password_file,omitempty" json:"auth_password_file,omitempty"`
-	AuthSecret       Secret              `yaml:"auth_secret,omitempty" json:"auth_secret,omitempty"`
-	AuthIdentity     string              `yaml:"auth_identity,omitempty" json:"auth_identity,omitempty"`
-	Headers          map[string]string   `yaml:"headers,omitempty" json:"headers,omitempty"`
-	HTML             string              `yaml:"html,omitempty" json:"html,omitempty"`
-	Text             string              `yaml:"text,omitempty" json:"text,omitempty"`
-	RequireTLS       *bool               `yaml:"require_tls,omitempty" json:"require_tls,omitempty"`
-	TLSConfig        commoncfg.TLSConfig `yaml:"tls_config,omitempty" json:"tls_config,omitempty"`
+	To               string               `yaml:"to,omitempty" json:"to,omitempty"`
+	From             string               `yaml:"from,omitempty" json:"from,omitempty"`
+	Hello            string               `yaml:"hello,omitempty" json:"hello,omitempty"`
+	Smarthost        HostPort             `yaml:"smarthost,omitempty" json:"smarthost,omitempty"`
+	AuthUsername     string               `yaml:"auth_username,omitempty" json:"auth_username,omitempty"`
+	AuthPassword     commoncfg.Secret     `yaml:"auth_password,omitempty" json:"auth_password,omitempty"`
+	AuthPasswordFile string               `yaml:"auth_password_file,omitempty" json:"auth_password_file,omitempty"`
+	AuthSecret       commoncfg.Secret     `yaml:"auth_secret,omitempty" json:"auth_secret,omitempty"`
+	AuthSecretFile   string               `yaml:"auth_secret_file,omitempty" json:"auth_secret_file,omitempty"`
+	AuthIdentity     string               `yaml:"auth_identity,omitempty" json:"auth_identity,omitempty"`
+	Headers          map[string]string    `yaml:"headers,omitempty" json:"headers,omitempty"`
+	HTML             string               `yaml:"html,omitempty" json:"html,omitempty"`
+	Text             string               `yaml:"text,omitempty" json:"text,omitempty"`
+	RequireTLS       *bool                `yaml:"require_tls,omitempty" json:"require_tls,omitempty"`
+	TLSConfig        *commoncfg.TLSConfig `yaml:"tls_config,omitempty" json:"tls_config,omitempty"`
+	// ForceImplicitTLS controls whether to use implicit TLS (direct TLS connection).
+	// true: force use of implicit TLS (direct TLS connection)
+	// false: force disable implicit TLS (use explicit TLS/STARTTLS if required)
+	// nil (default): auto-detect based on port (465=implicit, other=explicit) for backward compatibility
+	ForceImplicitTLS *bool           `yaml:"force_implicit_tls,omitempty" json:"force_implicit_tls,omitempty"`
+	Threading        ThreadingConfig `yaml:"threading,omitempty" json:"threading,omitempty"`
+}
+
+// ThreadingConfig configures mail threading.
+type ThreadingConfig struct {
+	Enabled      bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ThreadByDate string `yaml:"thread_by_date,omitempty" json:"thread_by_date,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *EmailConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *EmailConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	*c = DefaultEmailConfig
 	type plain EmailConfig
 	if err := unmarshal((*plain)(c)); err != nil {
@@ -182,6 +196,18 @@ func (c *EmailConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		normalizedHeaders[normalized] = v
 	}
 	c.Headers = normalizedHeaders
+
+	if c.Threading.Enabled {
+		if _, ok := normalizedHeaders["References"]; ok {
+			return errors.New("conflicting configuration: threading.enabled conflicts with custom References header")
+		}
+		if _, ok := normalizedHeaders["In-Reply-To"]; ok {
+			return errors.New("conflicting configuration: threading.enabled conflicts with custom In-Reply-To header")
+		}
+		if !slices.Contains([]string{"none", "daily"}, c.Threading.ThreadByDate) {
+			return errors.New("threading.thread_by_date must be either 'none' or 'daily'")
+		}
+	}
 
 	return nil
 }
@@ -324,15 +350,16 @@ type WechatConfig struct {
 
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
-	APISecret   Secret           `yaml:"api_secret,omitempty" json:"api_secret,omitempty"`
-	CorpID      string           `yaml:"corp_id,omitempty" json:"corp_id,omitempty"`
-	Message     string           `yaml:"message,omitempty" json:"message,omitempty"`
-	APIURL      *amcommoncfg.URL `yaml:"api_url,omitempty" json:"api_url,omitempty"`
-	ToUser      string           `yaml:"to_user,omitempty" json:"to_user,omitempty"`
-	ToParty     string           `yaml:"to_party,omitempty" json:"to_party,omitempty"`
-	ToTag       string           `yaml:"to_tag,omitempty" json:"to_tag,omitempty"`
-	AgentID     string           `yaml:"agent_id,omitempty" json:"agent_id,omitempty"`
-	MessageType string           `yaml:"message_type,omitempty" json:"message_type,omitempty"`
+	APISecret     commoncfg.Secret `yaml:"api_secret,omitempty" json:"api_secret,omitempty"`
+	APISecretFile string           `yaml:"api_secret_file,omitempty" json:"api_secret_file,omitempty"`
+	CorpID        string           `yaml:"corp_id,omitempty" json:"corp_id,omitempty"`
+	Message       string           `yaml:"message,omitempty" json:"message,omitempty"`
+	APIURL        *amcommoncfg.URL `yaml:"api_url,omitempty" json:"api_url,omitempty"`
+	ToUser        string           `yaml:"to_user,omitempty" json:"to_user,omitempty"`
+	ToParty       string           `yaml:"to_party,omitempty" json:"to_party,omitempty"`
+	ToTag         string           `yaml:"to_tag,omitempty" json:"to_tag,omitempty"`
+	AgentID       string           `yaml:"agent_id,omitempty" json:"agent_id,omitempty"`
+	MessageType   string           `yaml:"message_type,omitempty" json:"message_type,omitempty"`
 }
 
 const wechatValidTypesRe = `^(text|markdown)$`
@@ -340,7 +367,7 @@ const wechatValidTypesRe = `^(text|markdown)$`
 var wechatTypeMatcher = regexp.MustCompile(wechatValidTypesRe)
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *WechatConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *WechatConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	*c = DefaultWechatConfig
 	type plain WechatConfig
 	if err := unmarshal((*plain)(c)); err != nil {
@@ -355,6 +382,10 @@ func (c *WechatConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return fmt.Errorf("weChat message type %q does not match valid options %s", c.MessageType, wechatValidTypesRe)
 	}
 
+	if c.APISecret != "" && len(c.APISecretFile) > 0 {
+		return errors.New("at most one of api_secret & api_secret_file must be configured")
+	}
+
 	return nil
 }
 
@@ -364,7 +395,7 @@ type VictorOpsConfig struct {
 
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
-	APIKey            Secret            `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	APIKey            commoncfg.Secret  `yaml:"api_key,omitempty" json:"api_key,omitempty"`
 	APIKeyFile        string            `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
 	APIURL            *amcommoncfg.URL  `yaml:"api_url" json:"api_url"`
 	RoutingKey        string            `yaml:"routing_key" json:"routing_key"`
@@ -419,25 +450,26 @@ type PushoverConfig struct {
 
 	HTTPConfig *commoncfg.HTTPClientConfig `yaml:"http_config,omitempty" json:"http_config,omitempty"`
 
-	UserKey     Secret   `yaml:"user_key,omitempty" json:"user_key,omitempty"`
-	UserKeyFile string   `yaml:"user_key_file,omitempty" json:"user_key_file,omitempty"`
-	Token       Secret   `yaml:"token,omitempty" json:"token,omitempty"`
-	TokenFile   string   `yaml:"token_file,omitempty" json:"token_file,omitempty"`
-	Title       string   `yaml:"title,omitempty" json:"title,omitempty"`
-	Message     string   `yaml:"message,omitempty" json:"message,omitempty"`
-	URL         string   `yaml:"url,omitempty" json:"url,omitempty"`
-	URLTitle    string   `yaml:"url_title,omitempty" json:"url_title,omitempty"`
-	Device      string   `yaml:"device,omitempty" json:"device,omitempty"`
-	Sound       string   `yaml:"sound,omitempty" json:"sound,omitempty"`
-	Priority    string   `yaml:"priority,omitempty" json:"priority,omitempty"`
-	Retry       duration `yaml:"retry,omitempty" json:"retry,omitempty"`
-	Expire      duration `yaml:"expire,omitempty" json:"expire,omitempty"`
-	TTL         duration `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-	HTML        bool     `yaml:"html" json:"html,omitempty"`
+	UserKey     commoncfg.Secret `yaml:"user_key,omitempty" json:"user_key,omitempty"`
+	UserKeyFile string           `yaml:"user_key_file,omitempty" json:"user_key_file,omitempty"`
+	Token       commoncfg.Secret `yaml:"token,omitempty" json:"token,omitempty"`
+	TokenFile   string           `yaml:"token_file,omitempty" json:"token_file,omitempty"`
+	Title       string           `yaml:"title,omitempty" json:"title,omitempty"`
+	Message     string           `yaml:"message,omitempty" json:"message,omitempty"`
+	URL         string           `yaml:"url,omitempty" json:"url,omitempty"`
+	URLTitle    string           `yaml:"url_title,omitempty" json:"url_title,omitempty"`
+	Device      string           `yaml:"device,omitempty" json:"device,omitempty"`
+	Sound       string           `yaml:"sound,omitempty" json:"sound,omitempty"`
+	Priority    string           `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Retry       duration         `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Expire      duration         `yaml:"expire,omitempty" json:"expire,omitempty"`
+	TTL         duration         `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	HTML        bool             `yaml:"html,omitempty" json:"html,omitempty"`
+	Monospace   bool             `yaml:"monospace,omitempty" json:"monospace,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
-func (c *PushoverConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (c *PushoverConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	*c = DefaultPushoverConfig
 	type plain PushoverConfig
 	if err := unmarshal((*plain)(c)); err != nil {
@@ -454,6 +486,9 @@ func (c *PushoverConfig) UnmarshalYAML(unmarshal func(interface{}) error) error 
 	}
 	if c.Token != "" && c.TokenFile != "" {
 		return errors.New("at most one of token & token_file must be configured")
+	}
+	if c.HTML && c.Monospace {
+		return errors.New("at most one of monospace & html must be configured")
 	}
 	return nil
 }

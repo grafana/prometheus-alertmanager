@@ -16,6 +16,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -646,9 +647,12 @@ func TestEmptyFieldsAndRegex(t *testing.T) {
 				FollowRedirects: true,
 				EnableHTTP2:     true,
 			},
-			ResolveTimeout:  model.Duration(5 * time.Minute),
-			SMTPSmarthost:   HostPort{Host: "localhost", Port: "25"},
-			SMTPFrom:        "alertmanager@example.org",
+			ResolveTimeout: model.Duration(5 * time.Minute),
+			SMTPSmarthost:  HostPort{Host: "localhost", Port: "25"},
+			SMTPFrom:       "alertmanager@example.org",
+			SMTPTLSConfig: &commoncfg.TLSConfig{
+				InsecureSkipVerify: false,
+			},
 			SlackAPIURL:     (*amcommoncfg.SecretURL)(amcommoncfg.MustParseURL("http://slack.example.com/")),
 			SMTPRequireTLS:  true,
 			PagerdutyURL:    amcommoncfg.MustParseURL("https://events.pagerduty.com/v2/enqueue"),
@@ -694,6 +698,9 @@ func TestEmptyFieldsAndRegex(t *testing.T) {
 						Smarthost:  HostPort{Host: "localhost", Port: "25"},
 						HTML:       "{{ template \"email.default.html\" . }}",
 						RequireTLS: &boolFoo,
+						TLSConfig: &commoncfg.TLSConfig{
+							InsecureSkipVerify: false,
+						},
 					},
 				},
 			},
@@ -784,8 +791,12 @@ func TestGlobalAndLocalSMTPPassword(t *testing.T) {
 	require.Equal(t, "/tmp/localuser1password", config.Receivers[0].EmailConfigs[1].AuthPasswordFile, "second email should use password file /tmp/localuser1password")
 	require.Emptyf(t, config.Receivers[0].EmailConfigs[1].AuthPassword, "password field should be empty when file provided")
 
-	require.Equal(t, Secret("mysecret"), config.Receivers[0].EmailConfigs[2].AuthPassword, "third email should use password mysecret")
+	require.Equal(t, commoncfg.Secret("mysecret"), config.Receivers[0].EmailConfigs[2].AuthPassword, "third email should use password mysecret")
 	require.Emptyf(t, config.Receivers[0].EmailConfigs[2].AuthPasswordFile, "file field should be empty when password provided")
+
+	require.Equal(t, commoncfg.Secret("myprecious"), config.Receivers[0].EmailConfigs[3].AuthSecret, "fourth email should use secret myprecious")
+
+	require.Equal(t, "/tmp/localuser4secret", config.Receivers[0].EmailConfigs[4].AuthSecretFile, "fifth email should use secret file /tmp/localuser4secret")
 }
 
 func TestGroupByAll(t *testing.T) {
@@ -806,7 +817,7 @@ func TestVictorOpsDefaultAPIKey(t *testing.T) {
 	}
 
 	defaultKey := conf.Global.VictorOpsAPIKey
-	overrideKey := Secret("qwe456")
+	overrideKey := commoncfg.Secret("qwe456")
 	if defaultKey != conf.Receivers[0].VictorOpsConfigs[0].APIKey {
 		t.Fatalf("Invalid victorops key: %s\nExpected: %s", conf.Receivers[0].VictorOpsConfigs[0].APIKey, defaultKey)
 	}
@@ -1067,6 +1078,93 @@ func TestNilRegexp(t *testing.T) {
 	}
 }
 
+func TestTelegramDefaultBotToken(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.telegram-default-bot-token.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.telegram-default-bot-token.yml", err)
+	}
+
+	defaultBotToken := conf.Global.TelegramBotToken
+	overrideBotToken := commoncfg.Secret("qwe456")
+	if defaultBotToken != conf.Receivers[0].TelegramConfigs[0].BotToken {
+		t.Fatalf("Invalid telegram bot token: %s\nExpected: %s", conf.Receivers[0].TelegramConfigs[0].BotToken, defaultBotToken)
+	}
+	if overrideBotToken != conf.Receivers[1].TelegramConfigs[0].BotToken {
+		t.Errorf("Invalid telegram bot token: %s\nExpected: %s", conf.Receivers[1].TelegramConfigs[0].BotToken, string(overrideBotToken))
+	}
+}
+
+func TestTelegramDefaultBotTokenFile(t *testing.T) {
+	conf, err := LoadFile("testdata/conf.telegram-default-bot-token-file.yml")
+	if err != nil {
+		t.Fatalf("Error parsing %s: %s", "testdata/conf.telegram-default-bot-token-file.yml", err)
+	}
+
+	defaultBotToken := conf.Global.TelegramBotTokenFile
+	overrideBotToken := "/override_file"
+	if defaultBotToken != conf.Receivers[0].TelegramConfigs[0].BotTokenFile {
+		t.Fatalf("Invalid telegram bot token file: %s\nExpected: %s", conf.Receivers[0].TelegramConfigs[0].BotTokenFile, defaultBotToken)
+	}
+	if overrideBotToken != conf.Receivers[1].TelegramConfigs[0].BotTokenFile {
+		t.Errorf("Invalid telegram bot token file: %s\nExpected: %s", conf.Receivers[1].TelegramConfigs[0].BotTokenFile, overrideBotToken)
+	}
+}
+
+func TestTelegramBothBotTokenAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.telegram-both-bot-token-and-file.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.telegram-both-bot-token-and-file.yml", err)
+	}
+	if err.Error() != "at most one of telegram_bot_token & telegram_bot_token_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of telegram_bot_token & telegram_bot_token_file must be configured", err.Error())
+	}
+}
+
+func TestTelegramValidReceiverBothBotTokenAndFile(t *testing.T) {
+	_, err := LoadFile("testdata/conf.telegram-valid-receiver-both-bot-token-and-file.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.telegram-valid-receiver-both-bot-token-and-file.yml", err)
+	}
+	if err.Error() != "at most one of telegram_bot_token & telegram_bot_token_file must be configured" {
+		t.Errorf("Expected: %s\nGot: %s", "at most one of telegram_bot_token & telegram_bot_token_file must be configured", err.Error())
+	}
+}
+
+func TestTelegramNoBotToken(t *testing.T) {
+	_, err := LoadFile("testdata/conf.telegram-no-bot-token.yml")
+	if err == nil {
+		t.Fatalf("Expected an error parsing %s: %s", "testdata/conf.telegram-no-bot-token.yml", err)
+	}
+	if err.Error() != "missing bot_token or bot_token_file on telegram_config" {
+		t.Errorf("Expected: %s\nGot: %s", "missing bot_token or bot_token_file on telegram_config", err.Error())
+	}
+}
+
+func TestTelegramFilePaths(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "alertmanager.yml")
+	require.NoError(t, os.WriteFile(filename, []byte(`
+global:
+  telegram_bot_token_file: secrets/global-token
+route:
+  receiver: telegram
+receivers:
+  - name: telegram
+    telegram_configs:
+      - chat_id_file: secrets/chat-id
+      - chat_id: 1234
+        bot_token_file: secrets/receiver-token
+`), 0o600))
+
+	conf, err := LoadFile(filename)
+	require.NoError(t, err)
+	require.Equal(t, "secrets/global-token", conf.Global.TelegramBotTokenFile)
+	configs := conf.Receivers[0].TelegramConfigs
+	require.Len(t, configs, 2)
+	require.Equal(t, "secrets/global-token", configs[0].BotTokenFile)
+	require.Equal(t, "secrets/chat-id", configs[0].ChatIDFile)
+	require.Equal(t, "secrets/receiver-token", configs[1].BotTokenFile)
+}
+
 func TestTelegramUnmarshal(t *testing.T) {
 	in := `
 route:
@@ -1088,6 +1186,62 @@ receivers:
 	require.Equal(t, commoncfg.Secret("secret"), c.Receivers[0].TelegramConfigs[0].BotToken)
 	require.Equal(t, int64(1234), c.Receivers[0].TelegramConfigs[0].ChatID)
 	require.Equal(t, "HTML", c.Receivers[0].TelegramConfigs[0].ParseMode)
+}
+
+func TestDiscordConfig(t *testing.T) {
+	in := `
+global:
+  http_config:
+    proxy_url: http://proxy.example.com:3128
+route:
+  receiver: discord
+receivers:
+- name: discord
+  discord_configs:
+  - webhook_url: https://example.com/webhook
+    content: '{{ .Status }}'
+    username: Alertmanager
+    avatar_url: https://example.com/avatar.png
+`
+	cfg, err := Load(in)
+	require.NoError(t, err)
+	require.Len(t, cfg.Receivers, 1)
+	require.Len(t, cfg.Receivers[0].DiscordConfigs, 1)
+	rc := cfg.Receivers[0].DiscordConfigs[0]
+	require.Equal(t, "{{ .Status }}", rc.Content)
+	require.Equal(t, "Alertmanager", rc.Username)
+	require.Equal(t, "https://example.com/avatar.png", rc.AvatarURL)
+	require.True(t, rc.VSendResolved)
+	require.Equal(t, `{{ template "discord.default.title" . }}`, rc.Title)
+	require.Equal(t, `{{ template "discord.default.message" . }}`, rc.Message)
+	require.Same(t, cfg.Global.HTTPConfig, rc.HTTPConfig)
+	require.Equal(t, "http://proxy.example.com:3128", rc.HTTPConfig.ProxyURL.String())
+}
+
+func TestDiscordRejectsMissingConfig(t *testing.T) {
+	in := `
+route:
+  receiver: discord
+receivers:
+- name: discord
+  discord_configs:
+  -
+`
+	_, err := Load(in)
+	require.ErrorContains(t, err, "missing discord config")
+}
+
+func TestPushoverRejectsMissingConfig(t *testing.T) {
+	in := `
+route:
+  receiver: pushover
+receivers:
+- name: pushover
+  pushover_configs:
+  -
+`
+	_, err := Load(in)
+	require.ErrorContains(t, err, "missing pushover config")
 }
 
 func TestMSTeamsV2RejectsMissingConfig(t *testing.T) {
